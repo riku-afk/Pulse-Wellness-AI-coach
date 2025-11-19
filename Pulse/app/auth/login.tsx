@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
 import { Text, View, TextInput, TouchableOpacity } from 'react-native';
 import { router } from 'expo-router';
-
+import { Eye, EyeOff } from 'lucide-react-native';
 
 
 export default function Login() {
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
+    const [showPassword, setShowPassword] = useState(false);
 
     const handleLogin = () => {
         console.log('Login:', { username, password });
@@ -86,7 +87,7 @@ export default function Login() {
                         value={password}
                         onChangeText={setPassword}
                         placeholder="Enter your password"
-                        secureTextEntry
+                        secureTextEntry={!showPassword}
                         style={{
                             borderWidth: 1,
                             borderColor: '#ddd',
@@ -95,7 +96,19 @@ export default function Login() {
                             fontSize: 16,
                             backgroundColor: '#fafafa'
                         }}
-                    />
+                    /><TouchableOpacity
+                        onPress={() => setShowPassword(!showPassword)}
+                        style={{
+                            position: 'absolute',
+                            right: 12,
+                            top: 41
+                        }}
+                    >
+                        {showPassword ?
+                            <EyeOff size={20} color="#666" /> :
+                            <Eye size={20} color="#666" />
+                        }
+                    </TouchableOpacity>
                 </View>
 
                 <TouchableOpacity
