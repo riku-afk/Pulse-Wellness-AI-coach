@@ -12,6 +12,7 @@ export default function Login() {
     const handleLogin = () => {
         console.log('Login:', { username, password });
         // Add your login logic here
+        router.push('/(tabs)/landing'); //navigate to landing page after login
     };
 
     const handleNavigateToSignUp = () => {
