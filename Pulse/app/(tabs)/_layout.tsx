@@ -1,10 +1,18 @@
-import { Tabs } from "expo-router";
+import { Tabs } from 'expo-router';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 
-export default function Tablayout() {
+export default function TabLayout() {
     return (
-        <Tabs>
-            <Tabs.Screen name="screens/landing" options={{ title: 'Home' }} />
-            <Tabs.Screen name="screens/reminders" options={{ title: 'Reminders' }} />
-        </Tabs>
+        <SafeAreaProvider>
+            <Tabs
+                screenOptions={{
+                    headerShown: false,
+                    tabBarStyle: { backgroundColor: '#fff' },
+                }}
+            >
+                <Tabs.Screen name="screens/reminders" options={{ title: 'Reminders' }} />
+                <Tabs.Screen name="pages/Dashboard" options={{ title: 'Dashboard' }} />
+            </Tabs>
+        </SafeAreaProvider>
     );
 }

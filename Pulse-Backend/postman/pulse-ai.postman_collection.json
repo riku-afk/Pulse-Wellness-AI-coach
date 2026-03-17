@@ -1,0 +1,67 @@
+{
+    "info": {
+        "name": "Pulse AI Service",
+        "_postman_id": "pulse-ai-collection",
+        "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    },
+    "variable": [
+        {
+            "key": "base_url",
+            "value": "http://localhost:5000/api/v1/ai"
+        }
+    ],
+    "item": [
+        {
+            "name": "Generate Pulse Advice",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "url": {
+                    "raw": "{{base_url}}/advice",
+                    "host": ["{{base_url}}"],
+                    "path": ["advice"]
+                },
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\n    \"sleepDuration\": 6,\n    \"moodLevel\": 3,\n    \"moodLabel\": \"Neutral\"\n}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "name": "Generate Follow-Up Response",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "url": {
+                    "raw": "{{base_url}}/follow-up",
+                    "host": ["{{base_url}}"],
+                    "path": ["follow-up"]
+                },
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\n    \"sleepDuration\": 6,\n    \"moodLevel\": 3,\n    \"moodLabel\": \"Neutral\",\n    \"messages\": [\n        {\n            \"type\": \"ai\",\n            \"content\": {\n                \"message\": \"You got 6 hours of sleep and your mood is neutral. Try a short walk today!\",\n                \"recommendations\": [\"Take a 10-minute walk\", \"Drink more water\"]\n            }\n        },\n        {\n            \"type\": \"user\",\n            \"content\": \"What should I eat for breakfast to boost my mood?\"\n        }\n    ]\n}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                }
+            }
+        }
+    ]
+}
