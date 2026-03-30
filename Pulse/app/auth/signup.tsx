@@ -32,6 +32,7 @@ export default function SignUp() {
             Alert.alert('Success', 'Account created! Please log in.', [
                 { text: 'OK', onPress: () => router.push('/auth/login') },
             ]);
+            router.push('/auth/login');
         } catch (error: any) {
             Alert.alert('Registration Failed', error.message || 'Something went wrong');
         } finally {

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Text, View, TextInput, TouchableOpacity, StyleSheet, useColorScheme, Alert, ActivityIndicator } from 'react-native';
 import { Mail, Lock, Eye, EyeOff, ArrowRight } from 'lucide-react-native';
 import { router } from 'expo-router';
-import { loginUser, checkProfileComplete } from '../services/auth';
+import { loginUser, checkProfileComplete, getUserPrefs } from '../services/auth';
 import { useAppStore } from '../store/appStore';
 
 export default function Login() {
@@ -12,7 +12,12 @@ export default function Login() {
     const [isLoading, setIsLoading] = useState(false);
     const colorScheme = useColorScheme();
     const isDark = colorScheme === 'dark';
-    const setSession = useAppStore(s => s.setSession);
+    const { setSession, setLastPulseCheckedAt, setHasSeenLanding, showToast } = useAppStore(s => ({
+        setSession: s.setSession,
+        setLastPulseCheckedAt: s.setLastPulseCheckedAt,
+        setHasSeenLanding: s.setHasSeenLanding,
+        showToast: s.showToast,
+    }));
 
     const handleLogin = async () => {
         setIsLoading(true);
@@ -20,8 +25,16 @@ export default function Login() {
             const user = await loginUser(email, password);
             setSession(user.userId, user.token);
             const profileDone = await checkProfileComplete(user.userId, user.token);
+
             if (profileDone) {
-                router.replace('/(tabs)/landing');
+                // Fetch this user's behavioural flags from Firestore so they are
+                // never shared with a different account on the same device.
+                const prefs = await getUserPrefs(user.userId, user.token);
+                setLastPulseCheckedAt(prefs.lastPulseCheckedAt);
+                setHasSeenLanding(prefs.hasSeenLanding);
+                showToast('Logged in successfully!');
+                // Skip the landing screen if the user has already seen it
+                router.replace(prefs.hasSeenLanding ? '/pages/Dashboard' : '/(tabs)/landing');
             } else {
                 router.replace(`/auth/complete-signup?userId=${encodeURIComponent(user.userId)}&token=${encodeURIComponent(user.token)}`);
             }

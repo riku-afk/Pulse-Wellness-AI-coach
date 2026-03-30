@@ -1,14 +1,36 @@
-import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, useColorScheme, Image } from 'react-native';
+import React, { useEffect } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, useColorScheme } from 'react-native';
 import { router } from 'expo-router';
 import { ArrowRight } from 'lucide-react-native';
+import { useAppStore } from '../store/appStore';
+import { updateUserPrefs } from '../services/auth';
 
 export default function Landing() {
     const colorScheme = useColorScheme();
     const isDark = colorScheme === 'dark';
 
+    const { userId, token, hasSeenLanding, setHasSeenLanding } = useAppStore(s => ({
+        userId: s.userId,
+        token: s.token,
+        hasSeenLanding: s.hasSeenLanding,
+        setHasSeenLanding: s.setHasSeenLanding,
+    }));
+
+    // Safety net: if prefs were loaded before navigation and already true, skip landing
+    useEffect(() => {
+        if (hasSeenLanding) {
+            router.replace('/pages/Dashboard');
+        }
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
     const handleBeginJourney = () => {
-        router.push('/pages/Dashboard');
+        setHasSeenLanding(true);
+        // Persist to Firestore so the next login for this user skips landing
+        if (userId && token) {
+            updateUserPrefs(userId, token, { hasSeenLanding: true })
+                .catch(e => console.warn('Failed to save hasSeenLanding:', e));
+        }
+        router.replace('/pages/Dashboard');
     };
 
     const styles = isDark ? darkStyles : lightStyles;

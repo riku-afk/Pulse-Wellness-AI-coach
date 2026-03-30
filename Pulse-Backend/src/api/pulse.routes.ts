@@ -173,4 +173,148 @@ router.get('/:userId/summary', async (req: Request, res: Response) => {
     }
 });
 
+// Save AI suggestion for a specific day's pulse entry
+router.patch('/:userId/ai/:date', async (req: Request, res: Response) => {
+    const { userId, date } = req.params;
+    const { aiSuggestion } = req.body;
+    const token = req.headers.authorization?.split('Bearer ')[1];
+
+    const body = toFirestoreDoc({
+        aiSuggestion: { stringValue: aiSuggestion ?? '' },
+    });
+
+    try {
+        const response = await fetch(
+            `${FIRESTORE_BASE_URL}/users/${userId}/dailyPulse/${date}?updateMask.fieldPaths=aiSuggestion`,
+            {
+                method: 'PATCH',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(body),
+            }
+        );
+
+        if (!response.ok) {
+            const error = await response.json() as { error?: { message?: string } };
+            res.status(400).json({ error: error.error?.message || 'Failed to save AI suggestion' });
+            return;
+        }
+
+        res.json({ message: 'AI suggestion saved' });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to save AI suggestion' });
+    }
+});
+
+// Get last 5 pulse entries with full data including AI suggestion
+router.get('/:userId/recent', async (req: Request, res: Response) => {
+    const { userId } = req.params;
+    const token = req.headers.authorization?.split('Bearer ')[1];
+
+    const queryBody = {
+        structuredQuery: {
+            from: [{ collectionId: 'dailyPulse' }],
+            orderBy: [{ field: { fieldPath: 'date' }, direction: 'DESCENDING' }],
+            limit: 5,
+        },
+    };
+
+    try {
+        const response = await fetch(
+            `${FIRESTORE_BASE_URL}/users/${userId}:runQuery`,
+            {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(queryBody),
+            }
+        );
+
+        if (!response.ok) {
+            const error = await response.json() as { error?: { message?: string } };
+            res.status(400).json({ error: error.error?.message || 'Failed to fetch recent pulse' });
+            return;
+        }
+
+        const results = await response.json() as RunQueryResult[];
+        const entries = results
+            .filter(r => r.document?.fields)
+            .map(r => ({
+                date: r.document!.fields.date?.stringValue ?? '',
+                moodLevel: parseInt(r.document!.fields.moodLevel?.integerValue ?? '0', 10),
+                moodLabel: r.document!.fields.moodLabel?.stringValue ?? '',
+                sleepDuration: r.document!.fields.sleepDuration?.doubleValue
+                    ?? parseFloat(r.document!.fields.sleepDuration?.integerValue ?? '0'),
+                sleepDebt: parseInt(r.document!.fields.sleepDebt?.integerValue ?? '0', 10),
+                pulseScore: parseInt(r.document!.fields.pulseScore?.integerValue ?? '0', 10),
+                aiSuggestion: r.document!.fields.aiSuggestion?.stringValue ?? '',
+            }));
+
+        res.json(entries);
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch recent pulse' });
+    }
+});
+
+// Paginated full pulse history — 5 per page, newest first
+router.get('/:userId/history', async (req: Request, res: Response) => {
+    const { userId } = req.params;
+    const page = Math.max(1, parseInt((req.query.page as string) ?? '1', 10));
+    const limit = 5;
+    const offset = (page - 1) * limit;
+    const token = req.headers.authorization?.split('Bearer ')[1];
+
+    const queryBody = {
+        structuredQuery: {
+            from: [{ collectionId: 'dailyPulse' }],
+            orderBy: [{ field: { fieldPath: 'date' }, direction: 'DESCENDING' }],
+            limit: limit + 1, // one extra to detect hasMore
+            offset,
+        },
+    };
+
+    try {
+        const response = await fetch(
+            `${FIRESTORE_BASE_URL}/users/${userId}:runQuery`,
+            {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(queryBody),
+            }
+        );
+
+        if (!response.ok) {
+            const error = await response.json() as { error?: { message?: string } };
+            res.status(400).json({ error: error.error?.message || 'Failed to fetch pulse history' });
+            return;
+        }
+
+        const results = await response.json() as RunQueryResult[];
+        const all = results
+            .filter(r => r.document?.fields)
+            .map(r => ({
+                date: r.document!.fields.date?.stringValue ?? '',
+                moodLevel: parseInt(r.document!.fields.moodLevel?.integerValue ?? '0', 10),
+                moodLabel: r.document!.fields.moodLabel?.stringValue ?? '',
+                sleepDuration: r.document!.fields.sleepDuration?.doubleValue
+                    ?? parseFloat(r.document!.fields.sleepDuration?.integerValue ?? '0'),
+                sleepDebt: parseInt(r.document!.fields.sleepDebt?.integerValue ?? '0', 10),
+                pulseScore: parseInt(r.document!.fields.pulseScore?.integerValue ?? '0', 10),
+                aiSuggestion: r.document!.fields.aiSuggestion?.stringValue ?? '',
+            }));
+
+        const hasMore = all.length > limit;
+        res.json({ entries: all.slice(0, limit), hasMore, page });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch pulse history' });
+    }
+});
+
 export default router;

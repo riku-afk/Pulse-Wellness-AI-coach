@@ -1,12 +1,14 @@
 import React, { useState } from 'react';
 import {
     View, Text, TextInput, TouchableOpacity, ScrollView,
-    StyleSheet, useColorScheme, Alert, ActivityIndicator,
+    StyleSheet, useColorScheme, Alert, ActivityIndicator, Image,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { User, Camera } from 'lucide-react-native';
-import { saveProfile } from '../services/auth';
+import { saveProfile, uploadAvatar } from '../services/auth';
 import { useAppStore } from '../store/appStore';
+import AvatarPickerSheet from '../components/AvatarPickerSheet';
+import { pickFromCamera, pickFromLibrary } from '../hooks/useAvatarPicker';
 
 const GENDER_OPTIONS = ['Male', 'Female', 'Non-binary', 'Prefer not to say'];
 
@@ -18,7 +20,18 @@ export default function CompleteSignup() {
     const [lastName, setLastName] = useState('');
     const [age, setAge] = useState('');
     const [gender, setGender] = useState('');
+    const [localPhotoUri, setLocalPhotoUri] = useState<string | null>(null);
+    const [pendingPhoto, setPendingPhoto] = useState<{ base64: string; mimeType: string } | null>(null);
+    const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
+    const [showPickerSheet, setShowPickerSheet] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
+
+    const handlePicked = async (pickerFn: typeof pickFromLibrary) => {
+        const picked = await pickerFn();
+        if (!picked) return;
+        setLocalPhotoUri(picked.uri);
+        setPendingPhoto({ base64: picked.base64, mimeType: picked.mimeType });
+    };
     const { setSession, setProfile } = useAppStore(s => ({
         setSession: s.setSession,
         setProfile: s.setProfile,
@@ -54,12 +67,24 @@ export default function CompleteSignup() {
 
         setIsLoading(true);
         try {
+            let photoURL: string | undefined;
+            if (pendingPhoto) {
+                setIsUploadingPhoto(true);
+                try {
+                    photoURL = await uploadAvatar(userId, token, pendingPhoto.base64, pendingPhoto.mimeType);
+                } catch {
+                    // Photo upload failed — continue without it, user can set it later in Edit Profile
+                } finally {
+                    setIsUploadingPhoto(false);
+                }
+            }
             const profileData = {
                 firstName: firstName.trim(),
                 middleName: middleName.trim(),
                 lastName: lastName.trim(),
                 age: parsedAge,
                 gender,
+                photoURL,
             };
             await saveProfile(userId, token, profileData);
             setSession(userId, token);
@@ -76,16 +101,35 @@ export default function CompleteSignup() {
         <ScrollView style={styles.scroll} contentContainerStyle={styles.container}>
             <View style={styles.card}>
 
-                {/* Avatar placeholder */}
-                <View style={styles.avatarWrapper}>
+                {/* Avatar */}
+                <TouchableOpacity style={styles.avatarWrapper} onPress={() => setShowPickerSheet(true)} disabled={isLoading}>
                     <View style={styles.avatar}>
-                        <User size={48} color={isDark ? '#64748b' : '#94a3b8'} />
+                        {localPhotoUri ? (
+                            <Image source={{ uri: localPhotoUri }} style={styles.avatarImage} />
+                        ) : (
+                            <User size={48} color={isDark ? '#64748b' : '#94a3b8'} />
+                        )}
                     </View>
                     <View style={styles.cameraButton}>
                         <Camera size={14} color="#ffffff" />
                     </View>
-                </View>
-                <Text style={styles.avatarHint}>Profile photo — coming soon</Text>
+                </TouchableOpacity>
+                <Text style={styles.avatarHint}>
+                    {localPhotoUri ? 'Tap to change photo' : 'Tap to add a profile photo (optional)'}
+                </Text>
+
+                <AvatarPickerSheet
+                    visible={showPickerSheet}
+                    onCamera={async () => {
+                        setShowPickerSheet(false);
+                        handlePicked(pickFromCamera);
+                    }}
+                    onLibrary={async () => {
+                        setShowPickerSheet(false);
+                        handlePicked(pickFromLibrary);
+                    }}
+                    onClose={() => setShowPickerSheet(false)}
+                />
 
                 {/* Header */}
                 <Text style={styles.title}>Complete Your Profile</Text>
@@ -221,7 +265,9 @@ const lightStyles = StyleSheet.create({
         alignItems: 'center',
         borderWidth: 2,
         borderColor: '#e2e8f0',
+        overflow: 'hidden',
     },
+    avatarImage: { width: 100, height: 100, borderRadius: 50 },
     cameraButton: {
         position: 'absolute',
         bottom: 0,
@@ -229,7 +275,7 @@ const lightStyles = StyleSheet.create({
         width: 32,
         height: 32,
         borderRadius: 16,
-        backgroundColor: '#cbd5e1',
+        backgroundColor: '#0ea5e9',
         justifyContent: 'center',
         alignItems: 'center',
         borderWidth: 2,
@@ -354,7 +400,9 @@ const darkStyles = StyleSheet.create({
         alignItems: 'center',
         borderWidth: 2,
         borderColor: '#475569',
+        overflow: 'hidden',
     },
+    avatarImage: { width: 100, height: 100, borderRadius: 50 },
     cameraButton: {
         position: 'absolute',
         bottom: 0,
@@ -362,7 +410,7 @@ const darkStyles = StyleSheet.create({
         width: 32,
         height: 32,
         borderRadius: 16,
-        backgroundColor: '#475569',
+        backgroundColor: '#0ea5e9',
         justifyContent: 'center',
         alignItems: 'center',
         borderWidth: 2,

@@ -17,6 +17,22 @@ export interface PulseSummary {
     hasData: boolean;
 }
 
+export interface RecentPulseEntry {
+    date: string;
+    moodLevel: number;
+    moodLabel: string;
+    sleepDuration: number;
+    sleepDebt: number;
+    pulseScore: number;
+    aiSuggestion: string;
+}
+
+export interface PulseHistoryPage {
+    entries: RecentPulseEntry[];
+    hasMore: boolean;
+    page: number;
+}
+
 export async function logDailyPulse(
     userId: string,
     token: string,
@@ -53,4 +69,60 @@ export async function getPulseSummary(
     }
 
     return json as PulseSummary;
+}
+
+export async function getRecentPulse(
+    userId: string,
+    token: string
+): Promise<RecentPulseEntry[]> {
+    const response = await fetch(`${BACKEND_URL}/api/v1/pulse/${userId}/recent`, {
+        headers: { 'Authorization': `Bearer ${token}` },
+    });
+
+    const json = await response.json();
+
+    if (!response.ok) {
+        throw new Error(json.error || 'Failed to fetch recent pulse');
+    }
+
+    return json as RecentPulseEntry[];
+}
+
+export async function getPulseHistory(
+    userId: string,
+    token: string,
+    page: number = 1
+): Promise<PulseHistoryPage> {
+    const response = await fetch(`${BACKEND_URL}/api/v1/pulse/${userId}/history?page=${page}`, {
+        headers: { 'Authorization': `Bearer ${token}` },
+    });
+
+    const json = await response.json();
+
+    if (!response.ok) {
+        throw new Error(json.error || 'Failed to fetch pulse history');
+    }
+
+    return json as PulseHistoryPage;
+}
+
+export async function saveAiSuggestion(
+    userId: string,
+    token: string,
+    date: string,
+    aiSuggestion: string
+): Promise<void> {
+    const response = await fetch(`${BACKEND_URL}/api/v1/pulse/${userId}/ai/${date}`, {
+        method: 'PATCH',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ aiSuggestion }),
+    });
+
+    if (!response.ok) {
+        const json = await response.json();
+        throw new Error(json.error || 'Failed to save AI suggestion');
+    }
 }
