@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
-import { Bell, TrendingUp, Moon, Activity, Sparkles, ChevronRight } from 'lucide-react-native';
+import { Bell, TrendingUp, Moon, Activity, Sparkles, ChevronRight, BookOpen } from 'lucide-react-native';
 import DailyPulseCheckModal from '../components/PulseModal';
 import PulseAiFloatingModal, { PulseSubmitData } from '../components/PulseAiFloatingModal';
 import { router } from 'expo-router';
@@ -331,6 +331,24 @@ export default function Dashboard() {
                             ? recentPulse[0].aiSuggestion.slice(0, 120) + (recentPulse[0].aiSuggestion.length > 120 ? '…' : '')
                             : 'Log your first pulse check-in to receive personalized AI insights.'}
                     </Text>
+                </TouchableOpacity>
+
+                {/* ── Journal ── */}
+                <TouchableOpacity
+                    style={styles.journalCard}
+                    activeOpacity={0.75}
+                    onPress={() => router.push('/pages/Journal')}
+                >
+                    <View style={styles.journalLeft}>
+                        <View style={styles.journalIconBox}>
+                            <BookOpen size={s(18)} color="#0ea5e9" />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                            <Text style={styles.journalTitle}>Daily Journal</Text>
+                            <Text style={styles.journalBody}>Write today's entry and get an AI reflection.</Text>
+                        </View>
+                    </View>
+                    <ChevronRight size={s(18)} color="#0ea5e9" />
                 </TouchableOpacity>
 
                 {/* ── Recent Pulse ── */}
@@ -747,6 +765,48 @@ const lightStyles = StyleSheet.create({
         fontSize: s(13),
         lineHeight: s(20),
         color: '#64748b',
+    },
+    journalCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginHorizontal: s(20),
+        marginBottom: s(16),
+        backgroundColor: '#ffffff',
+        borderRadius: s(16),
+        paddingHorizontal: s(16),
+        paddingVertical: s(14),
+        borderWidth: 1,
+        borderColor: '#e2e8f0',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 8,
+        elevation: 2,
+    },
+    journalLeft: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: s(12),
+    },
+    journalIconBox: {
+        width: s(36),
+        height: s(36),
+        borderRadius: s(10),
+        backgroundColor: '#e0f2fe',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    journalTitle: {
+        fontSize: s(15),
+        fontWeight: '700',
+        color: '#0f172a',
+        marginBottom: s(2),
+    },
+    journalBody: {
+        fontSize: s(12),
+        color: '#64748b',
+        lineHeight: s(18),
     },
     statsRow: {
         flexDirection: 'row',
@@ -1218,6 +1278,43 @@ const darkStyles = StyleSheet.create({
         fontSize: s(13),
         lineHeight: s(20),
         color: '#94a3b8',
+    },
+    journalCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginHorizontal: s(20),
+        marginBottom: s(16),
+        backgroundColor: '#1e293b',
+        borderRadius: s(16),
+        paddingHorizontal: s(16),
+        paddingVertical: s(14),
+        borderWidth: 1,
+        borderColor: '#334155',
+    },
+    journalLeft: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: s(12),
+    },
+    journalIconBox: {
+        width: s(36),
+        height: s(36),
+        borderRadius: s(10),
+        backgroundColor: '#1e3a5f',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    journalTitle: {
+        fontSize: s(15),
+        fontWeight: '700',
+        color: '#f8fafc',
+        marginBottom: s(2),
+    },
+    journalBody: {
+        fontSize: s(12),
+        color: '#64748b',
+        lineHeight: s(18),
     },
     statsRow: {
         flexDirection: 'row',

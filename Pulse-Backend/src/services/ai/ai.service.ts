@@ -62,27 +62,6 @@ function buildPrompt(
     [Greeting] + [1 personalized insight] + [1 actionable suggestion] + [optional: 1 natural question]
     Just write a natural, human response.`;
 
-    } else if (!hasPulseData) {
-        prompt = `You are Pulse, a warm and grounded AI wellness coach. The user hasn't logged any data yet.
-
-    Tone & Style:
-    - Open with a short, natural greeting
-    - Sound approachable and calm — not salesy or overly enthusiastic
-    - No emojis, or at most one
-    - Never explain your role or mention you're an AI
-    - 2–4 sentences total
-
-    Response Logic:
-    - Don't assume anything about the user's health or habits
-    - Offer one simple, universally helpful wellness nudge (movement, rest, mindfulness, hydration)
-    - Vary your advice — don't always default to the same tip
-    - Optionally invite them to share how they're feeling (1 question max)
-    - Always respond naturally to what the user says — never output format labels or placeholders
-
-    IMPORTANT: You are in an active conversation. Reply directly to the user's latest message.
-    Do NOT output format descriptions like "[Greeting] + [1 practical wellness tip]".
-    Just write a natural, human response.`;
-
     } else {
         prompt = `You are Pulse, a warm and grounded AI wellness coach.
 
@@ -184,6 +163,61 @@ async function* streamGemini(prompt: string): AsyncGenerator<string> {
         const text = chunk.text();
         if (text) yield text;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Non-streaming helpers (used for journal reflection)
+// ---------------------------------------------------------------------------
+
+async function generateWithOllama(prompt: string): Promise<string> {
+    const ollamaUrl = process.env.OLLAMA;
+    const model = process.env.OLLAMA_MODEL ?? 'gemma3:1b';
+
+    if (!ollamaUrl) throw new Error('OLLAMA env variable is not set');
+
+    const response = await fetch(ollamaUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            model,
+            prompt,
+            stream: false,
+            options: { temperature: 0.7 },
+        }),
+    });
+
+    if (!response.ok) throw new Error(`Ollama request failed: ${response.status}`);
+    const data = await response.json() as { response: string };
+    return data.response?.trim() ?? '';
+}
+
+async function generateWithGemini(prompt: string): Promise<string> {
+    const apiKey = process.env.GEMINI_API_KEY;
+    const model = process.env.GEMINI_MODEL ?? 'gemini-1.5-flash';
+
+    if (!apiKey) throw new Error('GEMINI_API_KEY env variable is not set');
+
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const geminiModel = genAI.getGenerativeModel({ model });
+    const result = await geminiModel.generateContent(prompt);
+    return result.response.text().trim();
+}
+
+export async function generateReflection(content: string, moodTag: number | null): Promise<string> {
+    const moodNote = moodTag != null
+        ? ` The writer rated their mood ${moodTag}/10 today.`
+        : '';
+    const prompt = `You are a thoughtful wellness journal companion. Read this journal entry and write exactly ONE short, warm sentence (under 20 words) that reflects something meaningful back to the writer. Do not give advice — just mirror an insight or feeling from what they wrote.${moodNote}
+
+Journal entry:
+"${content}"
+
+One-line reflection:`;
+
+    const provider = (process.env.AI_PROVIDER ?? 'ollama') as AIProvider;
+    return provider === 'gemini'
+        ? generateWithGemini(prompt)
+        : generateWithOllama(prompt);
 }
 
 // ---------------------------------------------------------------------------

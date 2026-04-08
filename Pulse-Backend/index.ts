@@ -7,6 +7,7 @@ dotenv.config();
 import aiRoutes from './src/api/ai.routes';
 import authRoutes from './src/api/auth.routes';
 import pulseRoutes from './src/api/pulse.routes';
+import journalRoutes from './src/api/journal.routes';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -18,6 +19,7 @@ app.use(express.json({ limit: '10mb' })); // base64 profile photos can be severa
 app.use('/api/v1/ai', aiRoutes);
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/pulse', pulseRoutes);
+app.use('/api/v1/journal', journalRoutes);
 
 app.get('/', (req, res) => {
     res.json({ message: 'Hello from Pulse Backend!' });
