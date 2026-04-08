@@ -29,6 +29,15 @@
     "plugins": [
       "expo-router",
       [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/icon.png",
+          "color": "#0ea5e9",
+          "defaultChannel": "pulse_reminders",
+          "sounds": []
+        }
+      ],
+      [
         "expo-image-picker",
         {
           "photosPermission": "Pulse needs access to your photos to set a profile picture.",

@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { LogOut, Bell, User, ChevronRight, Shield } from 'lucide-react-native';
 import { logout } from '../services/auth';
+import { setNotificationPreference } from '../services/notifications';
 import { useAppStore } from '../store/appStore';
 import BackButton from '../components/BackButton';
 import UserAvatar from '../components/UserAvatar';
@@ -20,13 +21,27 @@ export default function Settings() {
     const styles = isDark ? darkStyles : lightStyles;
     const insets = useSafeAreaInsets();
 
-    const [notificationsEnabled, setNotificationsEnabled] = useState(true);
-
-    const { profile, clearSession, showToast } = useAppStore(s => ({
+    const { profile, userId, token, clearSession, showToast } = useAppStore(s => ({
         profile: s.profile,
+        userId: s.userId,
+        token: s.token,
         clearSession: s.clearSession,
         showToast: s.showToast,
     }));
+
+    const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+
+    const handleNotificationToggle = async (value: boolean) => {
+        setNotificationsEnabled(value);
+        if (!userId || !token) return;
+        try {
+            await setNotificationPreference(userId, token, value);
+        } catch (e) {
+            // Revert on failure
+            setNotificationsEnabled(!value);
+            showToast('Failed to update notification settings');
+        }
+    };
 
     const handleLogout = async () => {
         try {
@@ -113,7 +128,7 @@ export default function Settings() {
                         </View>
                         <Switch
                             value={notificationsEnabled}
-                            onValueChange={setNotificationsEnabled}
+                            onValueChange={handleNotificationToggle}
                             trackColor={{ false: '#cbd5e1', true: '#0ea5e9' }}
                             thumbColor="#ffffff"
                         />

@@ -8,6 +8,8 @@ import aiRoutes from './src/api/ai.routes';
 import authRoutes from './src/api/auth.routes';
 import pulseRoutes from './src/api/pulse.routes';
 import journalRoutes from './src/api/journal.routes';
+import notificationRoutes from './src/api/notification.routes';
+import { startNotificationCrons } from './src/jobs/notification.cron';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -20,11 +22,13 @@ app.use('/api/v1/ai', aiRoutes);
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/pulse', pulseRoutes);
 app.use('/api/v1/journal', journalRoutes);
+app.use('/api/v1/notifications', notificationRoutes);
 
-app.get('/', (req, res) => {
+app.get('/', (_req, res) => {
     res.json({ message: 'Hello from Pulse Backend!' });
 });
 
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
+    startNotificationCrons();
 });

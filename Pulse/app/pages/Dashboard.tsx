@@ -8,10 +8,12 @@ import { useFocusEffect } from 'expo-router';
 import { Bell, TrendingUp, Moon, Activity, Sparkles, ChevronRight, BookOpen } from 'lucide-react-native';
 import DailyPulseCheckModal from '../components/PulseModal';
 import PulseAiFloatingModal, { PulseSubmitData } from '../components/PulseAiFloatingModal';
+import NotificationModal from '../components/NotificationModal';
 import { router } from 'expo-router';
 import { getProfile, getUserPrefs, updateUserPrefs } from '../services/auth';
 import UserAvatar from '../components/UserAvatar';
 import { logDailyPulse, getPulseSummary, getRecentPulse, saveAiSuggestion, PulseSummary, RecentPulseEntry } from '../services/pulse';
+import { getNotifications } from '../services/notifications';
 
 import { useAppStore } from '../store/appStore';
 
@@ -57,6 +59,8 @@ export default function Dashboard() {
     const [pendingPulseData, setPendingPulseData] = useState<PulseSubmitData | null>(null);
     const [viewingPulse, setViewingPulse] = useState<RecentPulseEntry | null>(null);
     const [recentPulse, setRecentPulse] = useState<RecentPulseEntry[]>([]);
+    const [showNotifications, setShowNotifications] = useState(false);
+    const [unreadCount, setUnreadCount] = useState(0);
     const colorScheme = useColorScheme();
     const isDark = colorScheme === 'dark';
     const styles = isDark ? darkStyles : lightStyles;
@@ -208,11 +212,20 @@ export default function Dashboard() {
             .catch(e => console.error('Failed to fetch profile:', e));
     }, [userId, token, profile]);
 
+    const fetchUnreadCount = useCallback(async () => {
+        if (!userId || !token) return;
+        try {
+            const result = await getNotifications(userId, token);
+            setUnreadCount(result.unreadCount);
+        } catch { /* silent */ }
+    }, [userId, token]);
+
     // Refresh summary + recent pulse every time this screen comes into focus
     useFocusEffect(useCallback(() => {
         fetchSummary();
         fetchRecentPulse();
-    }, [fetchSummary, fetchRecentPulse]));
+        fetchUnreadCount();
+    }, [fetchSummary, fetchRecentPulse, fetchUnreadCount]));
 
     const displayName = profile
         ? `${profile.firstName} ${profile.lastName}`
@@ -268,8 +281,19 @@ export default function Dashboard() {
                         </View>
                     </View>
                     <View style={styles.headerActions}>
-                        <TouchableOpacity style={styles.iconButton} activeOpacity={0.7}>
+                        <TouchableOpacity
+                            style={styles.iconButton}
+                            activeOpacity={0.7}
+                            onPress={() => setShowNotifications(true)}
+                        >
                             <Bell size={s(22)} color={isDark ? '#f8fafc' : '#0f172a'} />
+                            {unreadCount > 0 && (
+                                <View style={styles.badgeDot}>
+                                    <Text style={styles.badgeText}>
+                                        {unreadCount > 9 ? '9+' : unreadCount}
+                                    </Text>
+                                </View>
+                            )}
                         </TouchableOpacity>
                     </View>
                 </View>
@@ -565,6 +589,13 @@ export default function Dashboard() {
                 } : undefined}
                 onClose={() => setViewingPulse(null)}
             />
+
+            {/* Notifications modal */}
+            <NotificationModal
+                visible={showNotifications}
+                onClose={() => setShowNotifications(false)}
+                onUnreadCountChange={setUnreadCount}
+            />
         </View>
     );
 }
@@ -640,6 +671,23 @@ const lightStyles = StyleSheet.create({
         backgroundColor: '#e2e8f0',
         justifyContent: 'center',
         alignItems: 'center',
+    },
+    badgeDot: {
+        position: 'absolute',
+        top: s(4),
+        right: s(4),
+        minWidth: s(16),
+        height: s(16),
+        borderRadius: s(8),
+        backgroundColor: '#ef4444',
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingHorizontal: s(3),
+    },
+    badgeText: {
+        fontSize: s(9),
+        fontWeight: '700',
+        color: '#ffffff',
     },
     card: {
         marginHorizontal: s(20),
@@ -1163,6 +1211,23 @@ const darkStyles = StyleSheet.create({
         backgroundColor: '#1e293b',
         justifyContent: 'center',
         alignItems: 'center',
+    },
+    badgeDot: {
+        position: 'absolute',
+        top: s(4),
+        right: s(4),
+        minWidth: s(16),
+        height: s(16),
+        borderRadius: s(8),
+        backgroundColor: '#ef4444',
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingHorizontal: s(3),
+    },
+    badgeText: {
+        fontSize: s(9),
+        fontWeight: '700',
+        color: '#ffffff',
     },
     card: {
         marginHorizontal: s(20),
