@@ -203,6 +203,29 @@ export async function logout(): Promise<void> {
         throw new Error('Logout failed');
     }
 }
+/** Exchange a Firebase refreshToken for a fresh idToken. Returns the new idToken and refreshToken. */
+export async function refreshIdToken(refreshToken: string): Promise<{ token: string; refreshToken: string }> {
+    const apiKey = 'AIzaSyCORxS1LYSylrliTWJQEjXMNq_soG30RpU';
+    const response = await fetch(
+        `https://securetoken.googleapis.com/v1/token?key=${apiKey}`,
+        {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ grant_type: 'refresh_token', refresh_token: refreshToken }),
+        }
+    );
+
+    const data = await response.json();
+    if (!response.ok) {
+        throw new Error(data.error?.message || 'Token refresh failed');
+    }
+
+    return {
+        token: data.id_token as string,
+        refreshToken: data.refresh_token as string,
+    };
+}
+
 export async function resetPassword(email: string): Promise<void> {
     const response = await fetch(`${BACKEND_URL}/api/v1/auth/forgot-password`, {
         method: 'POST',

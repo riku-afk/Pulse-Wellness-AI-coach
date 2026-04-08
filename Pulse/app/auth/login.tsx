@@ -23,7 +23,7 @@ export default function Login() {
         setIsLoading(true);
         try {
             const user = await loginUser(email, password);
-            setSession(user.userId, user.token);
+            setSession(user.userId, user.token, user.refreshToken);
             const profileDone = await checkProfileComplete(user.userId, user.token);
 
             if (profileDone) {

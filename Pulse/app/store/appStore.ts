@@ -12,6 +12,7 @@ export interface StoredChatMessage {
 interface AppState {
     userId: string | null;
     token: string | null;
+    refreshToken: string | null;
     profile: UserProfile | null;
     hasSeenLanding: boolean;
     lastPulseCheckedAt: number | null;
@@ -20,7 +21,8 @@ interface AppState {
     aiChatDate: string | null;
     // Global in-app toast (not persisted)
     toastMessage: string | null;
-    setSession: (userId: string, token: string) => void;
+    setSession: (userId: string, token: string, refreshToken?: string) => void;
+    setToken: (token: string, refreshToken?: string) => void;
     setProfile: (profile: UserProfile) => void;
     clearSession: () => void;
     setHasSeenLanding: (value: boolean) => void;
@@ -36,20 +38,23 @@ export const useAppStore = create<AppState>()(
         (set) => ({
             userId: null,
             token: null,
+            refreshToken: null,
             profile: null,
             hasSeenLanding: false,
             lastPulseCheckedAt: null,
             aiChatHistory: [],
             aiChatDate: null,
             toastMessage: null,
-            setSession: (userId, token) => set({ userId, token }),
+            setSession: (userId, token, refreshToken) => set({ userId, token, refreshToken: refreshToken ?? null }),
+            setToken: (token, refreshToken) => set({ token, ...(refreshToken ? { refreshToken } : {}) }),
             setProfile: (profile) => set({ profile }),
             clearSession: () => set({
                 userId: null,
                 token: null,
+                refreshToken: null,
                 profile: null,
                 hasSeenLanding: false,
-                lastPulseCheckedAt: null, // reset per-user — different users have different pulse schedules
+                lastPulseCheckedAt: null,
                 aiChatHistory: [],
                 aiChatDate: null,
             }),
@@ -67,6 +72,7 @@ export const useAppStore = create<AppState>()(
             partialize: (state) => ({
                 userId: state.userId,
                 token: state.token,
+                refreshToken: state.refreshToken,
                 profile: state.profile,
                 aiChatHistory: state.aiChatHistory,
                 aiChatDate: state.aiChatDate,
