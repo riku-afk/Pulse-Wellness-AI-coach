@@ -150,7 +150,7 @@ async function* streamOllama(prompt: string): AsyncGenerator<string> {
 
 async function* streamGemini(prompt: string): AsyncGenerator<string> {
     const apiKey = process.env.GEMINI_API_KEY;
-    const model = process.env.GEMINI_MODEL ?? 'gemini-1.5-flash';
+    const model = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
 
     if (!apiKey) throw new Error('GEMINI_API_KEY env variable is not set');
 
@@ -193,7 +193,7 @@ async function generateWithOllama(prompt: string): Promise<string> {
 
 async function generateWithGemini(prompt: string): Promise<string> {
     const apiKey = process.env.GEMINI_API_KEY;
-    const model = process.env.GEMINI_MODEL ?? 'gemini-1.5-flash';
+    const model = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
 
     if (!apiKey) throw new Error('GEMINI_API_KEY env variable is not set');
 
