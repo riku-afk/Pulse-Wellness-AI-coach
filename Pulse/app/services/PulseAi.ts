@@ -1,4 +1,4 @@
-const BACKEND_URL = 'http://localhost:5000';
+const BACKEND_URL = 'https://pulse-wellness-ai-coach-production.up.railway.app';
 
 export interface PulseData {
     sleepDuration: number;
