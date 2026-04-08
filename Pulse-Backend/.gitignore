@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.env
+*.json.key
+*-firebase-adminsdk-*.json
+*.pem
