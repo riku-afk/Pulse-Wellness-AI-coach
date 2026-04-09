@@ -1,8 +1,17 @@
 "use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.streamGroq = streamGroq;
 exports.generateReflection = generateReflection;
 exports.generateAIResponse = generateAIResponse;
 const generative_ai_1 = require("@google/generative-ai");
+const openai_1 = __importDefault(require("openai"));
+const client = new openai_1.default({
+    apiKey: process.env.GROQ_API_KEY,
+    baseURL: "https://api.groq.com/openai/v1",
+});
 // ---------------------------------------------------------------------------
 // Prompt builder (shared between providers)
 // ---------------------------------------------------------------------------
@@ -121,7 +130,7 @@ async function* streamOllama(prompt) {
 // ---------------------------------------------------------------------------
 async function* streamGemini(prompt) {
     const apiKey = process.env.GEMINI_API_KEY;
-    const model = process.env.GEMINI_MODEL ?? 'gemini-1.5-flash';
+    const model = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
     if (!apiKey)
         throw new Error('GEMINI_API_KEY env variable is not set');
     const genAI = new generative_ai_1.GoogleGenerativeAI(apiKey);
@@ -131,6 +140,24 @@ async function* streamGemini(prompt) {
         const text = chunk.text();
         if (text)
             yield text;
+    }
+}
+// ---------------------------------------------------------------------------
+// Groq provider
+// ---------------------------------------------------------------------------
+async function* streamGroq(prompt) {
+    const model = process.env.GROQ_MODEL ?? "llama-3.1-8b-instant";
+    const stream = await client.chat.completions.create({
+        model,
+        messages: [
+            { role: "user", content: prompt }
+        ],
+        stream: true,
+    });
+    for await (const chunk of stream) {
+        const content = chunk.choices[0]?.delta?.content;
+        if (content)
+            yield content;
     }
 }
 // ---------------------------------------------------------------------------
@@ -158,13 +185,23 @@ async function generateWithOllama(prompt) {
 }
 async function generateWithGemini(prompt) {
     const apiKey = process.env.GEMINI_API_KEY;
-    const model = process.env.GEMINI_MODEL ?? 'gemini-1.5-flash';
+    const model = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
     if (!apiKey)
         throw new Error('GEMINI_API_KEY env variable is not set');
     const genAI = new generative_ai_1.GoogleGenerativeAI(apiKey);
     const geminiModel = genAI.getGenerativeModel({ model });
     const result = await geminiModel.generateContent(prompt);
     return result.response.text().trim();
+}
+async function generateWithGroq(prompt) {
+    const model = process.env.GROQ_MODEL ?? "llama-3.1-8b-instant";
+    const completion = await client.chat.completions.create({
+        model,
+        messages: [
+            { role: "user", content: prompt }
+        ],
+    });
+    return completion.choices[0]?.message?.content?.trim() ?? "";
 }
 async function generateReflection(content, moodTag) {
     const moodNote = moodTag != null
@@ -177,9 +214,11 @@ Journal entry:
 
 One-line reflection:`;
     const provider = (process.env.AI_PROVIDER ?? 'ollama');
-    return provider === 'gemini'
-        ? generateWithGemini(prompt)
-        : generateWithOllama(prompt);
+    if (provider === 'gemini')
+        return generateWithGemini(prompt);
+    if (provider === 'groq')
+        return generateWithGroq(prompt);
+    return generateWithOllama(prompt);
 }
 // ---------------------------------------------------------------------------
 // Public entry point — delegates to the active provider
@@ -189,6 +228,9 @@ async function* generateAIResponse(userMessage, pulseData, conversationHistory =
     const prompt = buildPrompt(userMessage, pulseData, conversationHistory);
     if (provider === 'gemini') {
         yield* streamGemini(prompt);
+    }
+    else if (provider === 'groq') {
+        yield* streamGroq(prompt);
     }
     else {
         yield* streamOllama(prompt);
