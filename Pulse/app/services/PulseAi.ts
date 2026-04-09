@@ -40,7 +40,11 @@ function processSSEChunk(
             return true;
         }
         if (data) {
-            onChunk(data);
+            try {
+                onChunk(JSON.parse(data));
+            } catch {
+                onChunk(data); // fallback for non-JSON chunks
+            }
         }
     }
     return false;

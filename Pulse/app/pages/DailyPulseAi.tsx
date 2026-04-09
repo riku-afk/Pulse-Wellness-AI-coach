@@ -82,12 +82,27 @@ export default function DailyPulseAI() {
     // Tracks whether the initial render loaded from history (so we don't re-stream)
     const loadedFromHistory = useRef(historyIsValid);
     const streamedRef = useRef<string>('');
+    const pendingChunksRef = useRef<string>(''); // batched chunk buffer for smooth rendering
     const abortControllerRef = useRef<AbortController | null>(null);
     // Always-current mirror of messages state — safe to read inside async callbacks
     const messagesRef = useRef<Message[]>(historyIsValid ? (aiChatHistory as Message[]) : []);
 
     const colorScheme = useColorScheme();
     const isDark = colorScheme === 'dark';
+
+    // Flush pending chunks into state at ~60fps for smooth rendering on mobile
+    useEffect(() => {
+        if (!isStreaming) return;
+        pendingChunksRef.current = '';
+        const id = setInterval(() => {
+            const pending = pendingChunksRef.current;
+            if (pending) {
+                pendingChunksRef.current = '';
+                setStreamedMessage((prev) => prev + pending);
+            }
+        }, 16);
+        return () => clearInterval(id);
+    }, [isStreaming]);
 
     const runStream = async (
         userMessage: string,
@@ -98,6 +113,7 @@ export default function DailyPulseAI() {
         abortControllerRef.current = controller;
 
         streamedRef.current = '';
+        pendingChunksRef.current = '';
         setStreamedMessage('');
         setIsStreaming(true);
         setStreamError(null);
@@ -109,7 +125,7 @@ export default function DailyPulseAI() {
                 history,
                 (chunk) => {
                     streamedRef.current += chunk;
-                    setStreamedMessage((prev) => prev + chunk);
+                    pendingChunksRef.current += chunk; // batched — interval flushes to state
                 },
                 () => {
                     const finalContent = streamedRef.current;

@@ -13,9 +13,12 @@ router.post('/chat', async (req: Request, res: Response) => {
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no'); // disable nginx/Railway proxy buffering
     res.flushHeaders();
 
-    console.log(`[AI] provider=${process.env.AI_PROVIDER ?? 'ollama'} key_set=${!!process.env.GEMINI_API_KEY} model=${process.env.GEMINI_MODEL ?? 'gemini-1.5-flash'}`);
+    const provider = process.env.AI_PROVIDER ?? 'ollama';
+    const model = process.env.GROQ_MODEL ?? process.env.GEMINI_MODEL ?? 'default';
+    console.log(`[AI] provider=${provider} model=${model}`);
 
     try {
         for await (const chunk of generateAIResponse(
@@ -23,7 +26,8 @@ router.post('/chat', async (req: Request, res: Response) => {
             pulseData,
             conversationHistory ?? []
         )) {
-            res.write(`data: ${chunk}\n\n`);
+            // JSON-encode so embedded newlines don't break SSE framing
+            res.write(`data: ${JSON.stringify(chunk)}\n\n`);
             (res as unknown as { flush?: () => void }).flush?.();
         }
         res.write('data: [DONE]\n\n');

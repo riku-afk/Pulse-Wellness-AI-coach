@@ -1,6 +1,7 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import OpenAI from "openai";
 
-export type AIProvider = 'ollama' | 'gemini';
+export type AIProvider = 'ollama' | 'gemini' | 'groq';
 
 export interface PulseData {
     sleepDuration: number;
@@ -18,6 +19,11 @@ interface OllamaStreamChunk {
     response: string;
     done: boolean;
 }
+
+const client = new OpenAI({
+    apiKey: process.env.GROQ_API_KEY,
+    baseURL: "https://api.groq.com/openai/v1",
+});
 
 // ---------------------------------------------------------------------------
 // Prompt builder (shared between providers)
@@ -166,6 +172,27 @@ async function* streamGemini(prompt: string): AsyncGenerator<string> {
 }
 
 // ---------------------------------------------------------------------------
+// Groq provider
+// ---------------------------------------------------------------------------
+
+export async function* streamGroq(prompt: string): AsyncGenerator<string> {
+    const model = process.env.GROQ_MODEL ?? "llama-3.1-8b-instant";
+
+    const stream = await client.chat.completions.create({
+        model,
+        messages: [
+            { role: "user", content: prompt }
+        ],
+        stream: true,
+    });
+
+    for await (const chunk of stream) {
+        const content = chunk.choices[0]?.delta?.content;
+        if (content) yield content;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Non-streaming helpers (used for journal reflection)
 // ---------------------------------------------------------------------------
 
@@ -203,6 +230,19 @@ async function generateWithGemini(prompt: string): Promise<string> {
     return result.response.text().trim();
 }
 
+async function generateWithGroq(prompt: string): Promise<string> {
+    const model = process.env.GROQ_MODEL ?? "llama-3.1-8b-instant";
+
+    const completion = await client.chat.completions.create({
+        model,
+        messages: [
+            { role: "user", content: prompt }
+        ],
+    });
+
+    return completion.choices[0]?.message?.content?.trim() ?? "";
+}
+
 export async function generateReflection(content: string, moodTag: number | null): Promise<string> {
     const moodNote = moodTag != null
         ? ` The writer rated their mood ${moodTag}/10 today.`
@@ -215,9 +255,9 @@ Journal entry:
 One-line reflection:`;
 
     const provider = (process.env.AI_PROVIDER ?? 'ollama') as AIProvider;
-    return provider === 'gemini'
-        ? generateWithGemini(prompt)
-        : generateWithOllama(prompt);
+    if (provider === 'gemini') return generateWithGemini(prompt);
+    if (provider === 'groq') return generateWithGroq(prompt);
+    return generateWithOllama(prompt);
 }
 
 // ---------------------------------------------------------------------------
@@ -234,6 +274,8 @@ export async function* generateAIResponse(
 
     if (provider === 'gemini') {
         yield* streamGemini(prompt);
+    } else if (provider === 'groq') {
+        yield* streamGroq(prompt);
     } else {
         yield* streamOllama(prompt);
     }

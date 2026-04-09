@@ -29,11 +29,15 @@ export async function storeNotification(
     const now = new Date();
     const expiresAt = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000); // +14 days
 
+    const phOffset = 8 * 60 * 60 * 1000;
+    const phDate = new Date(now.getTime() + phOffset).toISOString().split('T')[0]; // PH date YYYY-MM-DD
+
     await db.collection('users').doc(userId).collection('notifications').add({
         title,
         body,
         type,
         isRead: false,
+        phDate,
         createdAt: admin.firestore.Timestamp.fromDate(now),
         expiresAt: admin.firestore.Timestamp.fromDate(expiresAt),
     });
@@ -60,6 +64,26 @@ export async function sendPushNotification(
             payload: { aps: { sound: 'default', badge: 1 } },
         },
     });
+}
+
+// ─── Check if a notification of this type was already sent to the user today ──
+
+async function hasNotifiedToday(userId: string, type: NotificationType): Promise<boolean> {
+    const db = getAdminDb();
+    if (!db) return false;
+
+    const phOffset = 8 * 60 * 60 * 1000;
+    const todayStr = new Date(Date.now() + phOffset).toISOString().split('T')[0];
+
+    const snap = await db
+        .collection('users').doc(userId)
+        .collection('notifications')
+        .where('type', '==', type)
+        .where('phDate', '==', todayStr)
+        .limit(1)
+        .get();
+
+    return !snap.empty;
 }
 
 // ─── Check if a user has logged a pulse today (PH time) ──────────────────────
@@ -109,6 +133,10 @@ export async function checkAndNotifyUsers(type: NotificationType): Promise<void>
 
         const fcmToken: string | undefined = data.fcmToken;
         if (!fcmToken) { skipped++; continue; }
+
+        // Skip if already notified today (guards against duplicate sends on server restart)
+        const alreadyNotified = await hasNotifiedToday(userId, type);
+        if (alreadyNotified) { skipped++; continue; }
 
         // Don't send if user already logged pulse today
         const hasPulsed = await hasPulsedToday(userId);
