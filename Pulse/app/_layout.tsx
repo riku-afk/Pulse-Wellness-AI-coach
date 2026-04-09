@@ -20,6 +20,7 @@ Notifications.setNotificationHandler({
 });
 
 async function registerForPushNotifications(): Promise<string | null> {
+  if (Platform.OS === 'web') return null; // web push requires VAPID — only use native FCM
   if (!Device.isDevice) return null;
 
   const { status: existing } = await Notifications.getPermissionsAsync();
@@ -54,15 +55,21 @@ export default function RootLayout() {
 
   // Register FCM push token once we have a valid session
   useEffect(() => {
+    console.log(`[FCM] useEffect triggered — userId=${userId ? 'set' : 'null'} token=${token ? 'set' : 'null'} platform=${Platform.OS}`);
     if (!userId || !token) return;
 
     registerForPushNotifications()
       .then((fcmToken) => {
-        if (fcmToken) {
-          registerFCMToken(userId, token, fcmToken).catch(() => { });
+        if (!fcmToken) {
+          console.warn('[FCM] No push token obtained — permission denied, not a physical device, or web platform');
+          return;
         }
+        console.log(`[FCM] Got device token, registering with backend...`);
+        return registerFCMToken(userId, token, fcmToken)
+          .then(() => console.log('[FCM] Token registered successfully'))
+          .catch((err) => console.error('[FCM] Token registration failed:', err));
       })
-      .catch(() => { });
+      .catch((err) => console.error('[FCM] registerForPushNotifications failed:', err));
   }, [userId, token]);
 
   return (

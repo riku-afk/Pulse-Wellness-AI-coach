@@ -19,7 +19,7 @@ export async function registerFCMToken(
     token: string,
     fcmToken: string,
 ): Promise<void> {
-    await fetch(`${BACKEND_URL}/api/v1/notifications/token`, {
+    const response = await fetch(`${BACKEND_URL}/api/v1/notifications/token`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -27,6 +27,10 @@ export async function registerFCMToken(
         },
         body: JSON.stringify({ userId, fcmToken }),
     });
+    if (!response.ok) {
+        const json = await response.json().catch(() => ({})) as { error?: string };
+        throw new Error(json.error ?? `HTTP ${response.status}`);
+    }
 }
 
 export async function setNotificationPreference(
