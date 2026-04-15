@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { getAdminDb } from '../config/firebase-admin';
 
 const router = Router();
 
@@ -78,7 +79,19 @@ router.post('/login', async (req: Request, res: Response) => {
     }
 });
 
-router.post('/logout', (_req, res) => {
+router.post('/logout', async (req: Request, res: Response) => {
+    const { userId } = req.body as { userId?: string };
+
+    if (userId) {
+        const db = getAdminDb();
+        if (db) {
+            // Clear only the FCM token so this device no longer receives pushes for this user.
+            // notificationsEnabled is left untouched — it reflects the user's preference, not the device state.
+            await db.collection('users').doc(userId).update({ fcmToken: null })
+                .catch(e => console.error(`[Auth] Failed to clear FCM token for ${userId}:`, e));
+        }
+    }
+
     res.json({ message: 'Logged out successfully' });
 });
 

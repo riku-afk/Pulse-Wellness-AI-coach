@@ -45,7 +45,7 @@ export default function Settings() {
 
     const handleLogout = async () => {
         try {
-            await logout();
+            await logout(userId ?? '');
         } catch (e) {
             // Server-side logout failed (e.g. offline) — still clear local session
             console.warn('Server logout failed, clearing session locally:', e);

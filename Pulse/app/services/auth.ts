@@ -192,11 +192,11 @@ export async function updateUserPrefs(
     }
 }
 
-export async function logout(): Promise<void> {
+export async function logout(userId: string): Promise<void> {
     const response = await fetch(`${BACKEND_URL}/api/v1/auth/logout`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: 'User logged out' }),
+        body: JSON.stringify({ userId }),
     });
 
     if (!response.ok) {
