@@ -34,7 +34,7 @@ export default function Login() {
                 setHasSeenLanding(prefs.hasSeenLanding);
                 showToast('Logged in successfully!');
                 // Skip the landing screen if the user has already seen it
-                router.replace(prefs.hasSeenLanding ? '/pages/Dashboard' : '/(tabs)/landing');
+                router.replace(prefs.hasSeenLanding ? '/(tabs)/home' : '/(tabs)/landing');
             } else {
                 router.replace(`/auth/complete-signup?userId=${encodeURIComponent(user.userId)}&token=${encodeURIComponent(user.token)}`);
             }

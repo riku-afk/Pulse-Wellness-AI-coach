@@ -1,3 +1,5 @@
+import { Platform } from 'react-native';
+
 const BACKEND_URL = 'https://pulse-wellness-ai-coach-production.up.railway.app';
 
 export interface PulseData {
@@ -153,7 +155,9 @@ function doStream(
     onDone: (() => void) | undefined,
     signal: AbortSignal | undefined,
 ): Promise<void> {
-    if (typeof ReadableStream !== 'undefined') {
+    // React Native's Fetch doesn't support SSE streaming on native (response.body unreliable).
+    // XHR onprogress is the only reliable path on Android/iOS.
+    if (Platform.OS === 'web') {
         return streamViaFetch(url, body, onChunk, onDone, signal);
     }
     return streamViaXHR(url, body, onChunk, onDone, signal);

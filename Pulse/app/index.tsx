@@ -63,10 +63,10 @@ export default function Index() {
           return;
         }
 
-        router.replace(prefs.hasSeenLanding ? '/pages/Dashboard' : '/(tabs)/landing');
+        router.replace(prefs.hasSeenLanding ? '/(tabs)/home' : '/(tabs)/landing');
       } catch {
         // Prefs fetch failed but token is valid — go to dashboard
-        router.replace('/pages/Dashboard');
+        router.replace('/(tabs)/home');
       }
     }, 0);
 

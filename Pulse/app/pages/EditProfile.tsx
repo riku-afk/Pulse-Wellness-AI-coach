@@ -91,7 +91,7 @@ export default function EditProfile() {
             await updateProfile(userId, token, updated);
             setProfile(updated);
             showToast('Profile updated successfully');
-            router.replace('/pages/Settings');
+            router.replace('/(tabs)/profile');
         } catch (error: any) {
             Alert.alert('Error', error.message || 'Failed to update profile');
         } finally {

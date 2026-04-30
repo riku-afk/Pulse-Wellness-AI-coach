@@ -19,7 +19,7 @@ export default function Landing() {
     // Safety net: if prefs were loaded before navigation and already true, skip landing
     useEffect(() => {
         if (hasSeenLanding) {
-            router.replace('/pages/Dashboard');
+            router.replace('/(tabs)/home');
         }
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -30,7 +30,7 @@ export default function Landing() {
             updateUserPrefs(userId, token, { hasSeenLanding: true })
                 .catch(e => console.warn('Failed to save hasSeenLanding:', e));
         }
-        router.replace('/pages/Dashboard');
+        router.replace('/(tabs)/home');
     };
 
     const styles = isDark ? darkStyles : lightStyles;

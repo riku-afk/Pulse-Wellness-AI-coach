@@ -30,33 +30,36 @@ export default function TabLayout() {
                 }}
             >
                 <Tabs.Screen
-                    name="pages/Dashboard"
+                    name="home"
                     options={{
                         title: 'Home',
                         tabBarIcon: ({ color, size }) => <LayoutDashboard size={size} color={color} />,
                     }}
                 />
                 <Tabs.Screen
-                    name="pages/Insights"
+                    name="insights"
                     options={{
                         title: 'Insights',
                         tabBarIcon: ({ color, size }) => <BarChart2 size={size} color={color} />,
                     }}
                 />
                 <Tabs.Screen
-                    name="pages/Journal"
+                    name="journal"
                     options={{
                         title: 'Journal',
                         tabBarIcon: ({ color, size }) => <BookOpen size={size} color={color} />,
                     }}
                 />
                 <Tabs.Screen
-                    name="pages/Settings"
+                    name="profile"
                     options={{
                         title: 'Profile',
                         tabBarIcon: ({ color, size }) => <User size={size} color={color} />,
                     }}
                 />
+                {/* Hide legacy screens from the tab bar */}
+                <Tabs.Screen name="landing" options={{ href: null }} />
+                <Tabs.Screen name="reminders" options={{ href: null }} />
             </Tabs>
         </SafeAreaProvider>
     );

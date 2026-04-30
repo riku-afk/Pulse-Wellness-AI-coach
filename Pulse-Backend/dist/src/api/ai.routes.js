@@ -37,6 +37,15 @@ router.post('/assess', async (req, res) => {
     res.setHeader('Connection', 'keep-alive');
     res.setHeader('X-Accel-Buffering', 'no');
     res.flushHeaders();
+    const provider = process.env.AI_PROVIDER ?? 'ollama';
+    const model = process.env.GEMINI_MODEL ?? process.env.GROQ_MODEL ?? 'default';
+    console.log(`[AI] /assess provider=${provider} model=${model} entries=${weekHistory?.length ?? 0} followUp=${!!followUpQuestion}`);
+    if (!weekHistory || weekHistory.length === 0) {
+        console.warn('[AI] /assess called with empty weekHistory');
+        res.write('data: [ERROR]\n\n');
+        res.end();
+        return;
+    }
     try {
         for await (const chunk of (0, ai_service_1.generateWeeklyAssessment)(weekHistory, followUpQuestion, previousAssessment)) {
             res.write(`data: ${JSON.stringify(chunk)}\n\n`);

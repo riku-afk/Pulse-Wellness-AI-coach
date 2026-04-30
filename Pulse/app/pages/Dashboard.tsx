@@ -228,7 +228,7 @@ export default function Dashboard() {
                     <View style={styles.headerLeft}>
                         <TouchableOpacity
                             style={styles.avatarContainer}
-                            onPress={() => router.push('/pages/Settings')}
+                            onPress={() => router.push('/(tabs)/profile')}
                             activeOpacity={0.7}
                         >
                             <UserAvatar size={s(40)} />
@@ -345,7 +345,7 @@ export default function Dashboard() {
                 <TouchableOpacity
                     style={styles.journalCard}
                     activeOpacity={0.75}
-                    onPress={() => router.push('/pages/Journal')}
+                    onPress={() => router.push('/(tabs)/journal')}
                 >
                     <View style={styles.journalLeft}>
                         <View style={styles.journalIconBox}>
