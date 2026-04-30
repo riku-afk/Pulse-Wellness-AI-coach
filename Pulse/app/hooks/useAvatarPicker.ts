@@ -1,4 +1,5 @@
 import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system';
 import { Alert } from 'react-native';
 
 export interface PickedImage {
@@ -11,10 +12,20 @@ async function pick(launcher: () => Promise<ImagePicker.ImagePickerResult>): Pro
     const result = await launcher();
     if (result.canceled || !result.assets?.[0]) return null;
     const asset = result.assets[0];
-    if (!asset.base64) return null;
+
+    // On Android with allowsEditing:true, base64 is null after cropping.
+    // Fall back to reading the file from disk.
+    let base64 = asset.base64 ?? null;
+    if (!base64) {
+        base64 = await FileSystem.readAsStringAsync(asset.uri, {
+            encoding: FileSystem.EncodingType.Base64,
+        });
+    }
+    if (!base64) return null;
+
     return {
         uri: asset.uri,
-        base64: asset.base64,
+        base64,
         mimeType: asset.mimeType || 'image/jpeg',
     };
 }
