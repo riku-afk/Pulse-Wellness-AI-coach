@@ -6,397 +6,402 @@ import {
     TouchableOpacity,
     TextInput,
     StyleSheet,
-    useColorScheme,
     ActivityIndicator,
     KeyboardAvoidingView,
     Platform,
-    Modal,
+    Dimensions,
 } from 'react-native';
-import { router, useLocalSearchParams } from 'expo-router';
-import { ArrowLeft, ThumbsUp, ThumbsDown, Copy, Trash2, ArrowUp, Moon, Sparkles } from 'lucide-react-native';
-import { streamAIResponse, PulseData, ConversationMessage } from '../services/PulseAi';
-import { useAppStore, StoredChatMessage } from '../store/appStore';
-import UserAvatar from '../components/UserAvatar';
+import { router } from 'expo-router';
+import { ArrowLeft, RefreshCw, ArrowUp, Moon, Smile, Calendar, Sparkles } from 'lucide-react-native';
+import { streamWeeklyAssessment, WeekEntry } from '../services/PulseAi';
+import { getRecentPulse, RecentPulseEntry } from '../services/pulse';
+import { useAppStore } from '../store/appStore';
 
-interface Message {
-    type: 'ai' | 'user';
-    content: string;
-    timestamp: string;
+const { width: SW } = Dimensions.get('window');
+const s = (n: number) => Math.round((SW / 375) * n);
+
+function moodColor(level: number): string {
+    if (level <= 1) return '#ef4444';
+    if (level <= 2) return '#f97316';
+    if (level <= 3) return '#f59e0b';
+    if (level <= 4) return '#84cc16';
+    return '#10b981';
 }
 
-// Returns today's date string in Philippine time (UTC+8), e.g. "2026-03-27"
-function getPHDateString(): string {
-    const phOffset = 8 * 60 * 60 * 1000;
-    const phNow = new Date(Date.now() + phOffset);
-    return phNow.toISOString().split('T')[0];
+function avgOf(arr: number[]): number {
+    if (arr.length === 0) return 0;
+    return arr.reduce((a, b) => a + b, 0) / arr.length;
 }
 
-// Formats an ISO timestamp to a readable time, e.g. "2:30 PM"
-function formatTime(iso: string): string {
-    return new Date(iso).toLocaleTimeString('en-US', {
-        hour: 'numeric',
-        minute: '2-digit',
-        hour12: true,
-    });
+interface FollowUpItem {
+    question: string;
+    answer: string;
 }
 
 export default function DailyPulseAI() {
-    const params = useLocalSearchParams();
-    const handleBack = () => router.back();
+    const { userId, token } = useAppStore(state => ({ userId: state.userId, token: state.token }));
 
-    const rawSleep = params.sleepDuration ? String(params.sleepDuration) : undefined;
-    const rawMood = params.moodLevel ? String(params.moodLevel) : undefined;
-    const rawMoodLabel = params.moodLabel ? String(params.moodLabel) : undefined;
-    const rawMoodEmoji = params.moodEmoji ? String(params.moodEmoji) : undefined;
-
-    const pulseData: PulseData | undefined =
-        rawSleep && rawMood && rawMoodLabel && rawMoodEmoji
-            ? {
-                sleepDuration: parseFloat(rawSleep),
-                moodLevel: parseInt(rawMood, 10),
-                moodLabel: rawMoodLabel,
-                moodEmojis: rawMoodEmoji,
-            }
-            : undefined;
-
-    const { aiChatHistory, aiChatDate, saveChatHistory, clearChatHistory } = useAppStore(s => ({
-        aiChatHistory: s.aiChatHistory,
-        aiChatDate: s.aiChatDate,
-        saveChatHistory: s.saveChatHistory,
-        clearChatHistory: s.clearChatHistory,
-    }));
-
-    // Check if stored history is from today (PH time) — if not, treat as fresh
-    const todayPH = getPHDateString();
-    const historyIsValid = aiChatDate === todayPH && aiChatHistory.length > 0;
-
-    const [messages, setMessages] = useState<Message[]>(
-        historyIsValid ? (aiChatHistory as Message[]) : []
-    );
-    const [streamedMessage, setStreamedMessage] = useState('');
+    const [weekEntries, setWeekEntries] = useState<RecentPulseEntry[]>([]);
+    const [assessment, setAssessment] = useState('');
+    const [isLoading, setIsLoading] = useState(true);
     const [isStreaming, setIsStreaming] = useState(false);
-    const [followUpQuestion, setFollowUpQuestion] = useState('');
-    const [streamError, setStreamError] = useState<string | null>(null);
-    const [showClearModal, setShowClearModal] = useState(false);
+    const [error, setError] = useState<string | null>(null);
 
-    // Tracks whether the initial render loaded from history (so we don't re-stream)
-    const loadedFromHistory = useRef(historyIsValid);
-    const streamedRef = useRef<string>('');
-    const pendingChunksRef = useRef<string>(''); // batched chunk buffer for smooth rendering
-    const abortControllerRef = useRef<AbortController | null>(null);
-    // Always-current mirror of messages state — safe to read inside async callbacks
-    const messagesRef = useRef<Message[]>(historyIsValid ? (aiChatHistory as Message[]) : []);
+    const [followUpText, setFollowUpText] = useState('');
+    const [completedFollowUps, setCompletedFollowUps] = useState<FollowUpItem[]>([]);
+    const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
+    const [streamingAnswer, setStreamingAnswer] = useState('');
+    const [isFollowUpStreaming, setIsFollowUpStreaming] = useState(false);
 
-    const colorScheme = useColorScheme();
-    const isDark = colorScheme === 'dark';
+    const assessmentRef = useRef('');
+    const charQueueRef = useRef('');
+    const networkDoneRef = useRef(false);
+    const followUpAnswerRef = useRef('');
+    const followUpQueueRef = useRef('');
+    const followUpNetworkDoneRef = useRef(false);
+    const pendingQuestionRef = useRef('');
+    const abortRef = useRef<AbortController | null>(null);
+    const weekEntriesRef = useRef<RecentPulseEntry[]>([]);
 
-    // Flush pending chunks into state at ~60fps for smooth rendering on mobile
+    // Main assessment typewriter
     useEffect(() => {
         if (!isStreaming) return;
-        pendingChunksRef.current = '';
+        charQueueRef.current = '';
         const id = setInterval(() => {
-            const pending = pendingChunksRef.current;
-            if (pending) {
-                pendingChunksRef.current = '';
-                setStreamedMessage((prev) => prev + pending);
+            if (charQueueRef.current.length > 0) {
+                const chars = charQueueRef.current.slice(0, 4);
+                charQueueRef.current = charQueueRef.current.slice(4);
+                setAssessment(prev => prev + chars);
+            } else if (networkDoneRef.current) {
+                networkDoneRef.current = false;
+                setIsStreaming(false);
             }
-        }, 16);
+        }, 30);
         return () => clearInterval(id);
     }, [isStreaming]);
 
-    const runStream = async (
-        userMessage: string,
-        history: ConversationMessage[]
-    ) => {
-        abortControllerRef.current?.abort();
-        const controller = new AbortController();
-        abortControllerRef.current = controller;
+    // Follow-up typewriter
+    useEffect(() => {
+        if (!isFollowUpStreaming) return;
+        followUpQueueRef.current = '';
+        followUpAnswerRef.current = '';
+        const id = setInterval(() => {
+            if (followUpQueueRef.current.length > 0) {
+                const chars = followUpQueueRef.current.slice(0, 4);
+                followUpQueueRef.current = followUpQueueRef.current.slice(4);
+                followUpAnswerRef.current += chars;
+                setStreamingAnswer(followUpAnswerRef.current);
+            } else if (followUpNetworkDoneRef.current) {
+                followUpNetworkDoneRef.current = false;
+                const finalAnswer = followUpAnswerRef.current;
+                const finalQuestion = pendingQuestionRef.current;
+                setCompletedFollowUps(prev => [...prev, { question: finalQuestion, answer: finalAnswer }]);
+                setPendingQuestion(null);
+                setStreamingAnswer('');
+                setIsFollowUpStreaming(false);
+            }
+        }, 30);
+        return () => clearInterval(id);
+    }, [isFollowUpStreaming]);
 
-        streamedRef.current = '';
-        pendingChunksRef.current = '';
-        setStreamedMessage('');
+    const runAssessment = async (entries: RecentPulseEntry[]) => {
+        if (entries.length === 0) {
+            setIsLoading(false);
+            setError('No pulse data yet. Log at least one day to get your weekly assessment.');
+            return;
+        }
+
+        abortRef.current?.abort();
+        const controller = new AbortController();
+        abortRef.current = controller;
+
+        assessmentRef.current = '';
+        charQueueRef.current = '';
+        networkDoneRef.current = false;
+        setAssessment('');
         setIsStreaming(true);
-        setStreamError(null);
+        setIsLoading(false);
+        setError(null);
+        setCompletedFollowUps([]);
+        setPendingQuestion(null);
+        setStreamingAnswer('');
+
+        const weekHistory: WeekEntry[] = entries.map(e => ({
+            date: e.date,
+            moodLevel: e.moodLevel,
+            moodLabel: e.moodLabel,
+            sleepDuration: e.sleepDuration,
+            pulseScore: e.pulseScore,
+        }));
 
         try {
-            await streamAIResponse(
-                userMessage,
-                pulseData,
-                history,
+            await streamWeeklyAssessment(
+                weekHistory,
                 (chunk) => {
-                    streamedRef.current += chunk;
-                    pendingChunksRef.current += chunk; // batched — interval flushes to state
+                    assessmentRef.current += chunk;
+                    charQueueRef.current += chunk;
                 },
-                () => {
-                    const finalContent = streamedRef.current;
-                    const newMsg: Message = {
-                        type: 'ai',
-                        content: finalContent,
-                        timestamp: new Date().toISOString(),
-                    };
-                    const updated = [...messagesRef.current, newMsg];
-                    messagesRef.current = updated;
-                    setMessages(updated);
-                    saveChatHistory(updated as StoredChatMessage[], getPHDateString());
-                    streamedRef.current = '';
-                    setStreamedMessage('');
-                    setIsStreaming(false);
-                },
-                controller.signal
+                () => { networkDoneRef.current = true; },
+                controller.signal,
             );
         } catch (err) {
             if (err instanceof Error && err.name === 'AbortError') return;
-            console.error('Streaming error:', err);
-            setStreamError("I'm having trouble connecting right now. Please try again.");
+            charQueueRef.current = '';
+            networkDoneRef.current = false;
             setIsStreaming(false);
+            setError("Couldn't generate your assessment. Tap refresh to try again.");
         }
     };
 
-    // Keep messagesRef in sync so async callbacks always see the latest messages
-    useEffect(() => {
-        messagesRef.current = messages;
-    }, [messages]);
+    const loadAndAssess = async () => {
+        if (!userId || !token) return;
+        setIsLoading(true);
+        setError(null);
+        setAssessment('');
+        setWeekEntries([]);
+        weekEntriesRef.current = [];
+
+        try {
+            const entries = await getRecentPulse(userId, token, 7);
+            setWeekEntries(entries);
+            weekEntriesRef.current = entries;
+            await runAssessment(entries);
+        } catch {
+            setIsLoading(false);
+            setError("Couldn't load your data. Check your connection and try again.");
+        }
+    };
 
     useEffect(() => {
-        if (loadedFromHistory.current) return;
-        if (aiChatDate !== null && aiChatDate !== todayPH) {
-            clearChatHistory();
-        }
-        const initialMessage = pulseData
-            ? 'Please give me a wellness check-in based on my health data.'
-            : 'Hello, I need some wellness guidance today.';
-        runStream(initialMessage, []);
-        return () => { abortControllerRef.current?.abort(); };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
+        loadAndAssess();
+        return () => { abortRef.current?.abort(); };
     }, []);
 
-    const clearChat = () => setShowClearModal(true);
-
-    const confirmClear = () => {
-        setShowClearModal(false);
-        clearChatHistory();
-        setMessages([]);
-        messagesRef.current = [];
-        loadedFromHistory.current = false;
-        const initialMessage = pulseData
-            ? 'Please give me a wellness check-in based on my health data.'
-            : 'Hello, I need some wellness guidance today.';
-        runStream(initialMessage, []);
-    };
-
     const handleSendFollowUp = async () => {
-        const text = followUpQuestion.trim();
-        if (!text || isStreaming) return;
+        const question = followUpText.trim();
+        if (!question || isFollowUpStreaming || isStreaming) return;
 
-        const userMsg: Message = {
-            type: 'user',
-            content: text,
-            timestamp: new Date().toISOString(),
-        };
-        const updatedMessages = [...messagesRef.current, userMsg];
-        messagesRef.current = updatedMessages;
-        setMessages(updatedMessages);
-        saveChatHistory(updatedMessages as StoredChatMessage[], getPHDateString());
-        setFollowUpQuestion('');
+        setFollowUpText('');
+        setPendingQuestion(question);
+        pendingQuestionRef.current = question;
 
-        const history: ConversationMessage[] = updatedMessages.map((m) => ({
-            type: m.type,
-            content: m.content,
+        abortRef.current?.abort();
+        const controller = new AbortController();
+        abortRef.current = controller;
+
+        followUpQueueRef.current = '';
+        followUpAnswerRef.current = '';
+        followUpNetworkDoneRef.current = false;
+        setStreamingAnswer('');
+        setIsFollowUpStreaming(true);
+
+        const weekHistory: WeekEntry[] = weekEntriesRef.current.map(e => ({
+            date: e.date,
+            moodLevel: e.moodLevel,
+            moodLabel: e.moodLabel,
+            sleepDuration: e.sleepDuration,
+            pulseScore: e.pulseScore,
         }));
 
-        await runStream(text, history);
+        try {
+            await streamWeeklyAssessment(
+                weekHistory,
+                (chunk) => { followUpQueueRef.current += chunk; },
+                () => { followUpNetworkDoneRef.current = true; },
+                controller.signal,
+                question,
+                assessmentRef.current,
+            );
+        } catch (err) {
+            if (err instanceof Error && err.name === 'AbortError') return;
+            followUpQueueRef.current = '';
+            followUpNetworkDoneRef.current = false;
+            setIsFollowUpStreaming(false);
+            setCompletedFollowUps(prev => [...prev, {
+                question,
+                answer: "I'm having trouble right now. Please try again.",
+            }]);
+            setPendingQuestion(null);
+            setStreamingAnswer('');
+        }
     };
 
-    const styles = isDark ? darkStyles : lightStyles;
+    const avgMood = weekEntries.length > 0 ? avgOf(weekEntries.map(e => e.moodLevel)) : null;
+    const avgSleep = weekEntries.length > 0 ? avgOf(weekEntries.map(e => e.sleepDuration)) : null;
 
     return (
-        <KeyboardAvoidingView
-            style={styles.container}
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        >
+        <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+
             {/* Header */}
             <View style={styles.header}>
-                <TouchableOpacity onPress={handleBack} style={styles.backButton}>
-                    <ArrowLeft size={24} color="#f8fafc" />
+                <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn}>
+                    <ArrowLeft size={s(22)} color="#f8fafc" />
                 </TouchableOpacity>
-                <Text style={styles.headerTitle}>Daily Pulse</Text>
-                <TouchableOpacity style={styles.moreButton} onPress={clearChat}>
-                    <Trash2 size={20} color="#ef4444" />
+                <View style={styles.headerCenter}>
+                    <Text style={styles.headerTitle}>Weekly Pulse</Text>
+                    <Text style={styles.headerSub}>AI Wellness Assessment</Text>
+                </View>
+                <TouchableOpacity
+                    style={styles.headerBtn}
+                    onPress={loadAndAssess}
+                    disabled={isLoading || isStreaming}
+                >
+                    <RefreshCw size={s(20)} color={isLoading || isStreaming ? '#334155' : '#64748b'} />
                 </TouchableOpacity>
             </View>
 
-            <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-                {/* Yesterday's Context — only shown when real pulse data was passed */}
-                {pulseData && (
-                    <View style={styles.contextContainer}>
-                        <Text style={styles.contextTitle}>YESTERDAY'S CONTEXT</Text>
-                        <View style={styles.contextBadges}>
-                            <View style={styles.badge}>
-                                <Moon size={16} color="#f8fafc" />
-                                <Text style={styles.badgeText}>{pulseData.sleepDuration}h Sleep</Text>
-                            </View>
-                            <Text style={styles.contextDot}>•</Text>
-                            <View style={styles.badge}>
-                                <Text style={styles.badgeEmoji}>{pulseData.moodEmojis}</Text>
-                                <Text style={styles.badgeText}>{pulseData.moodLabel}</Text>
-                            </View>
-                        </View>
-                        <TouchableOpacity style={styles.trendButton}>
-                            <Sparkles size={20} color="#0ea5e9" />
-                        </TouchableOpacity>
+            {/* Week Stats Strip */}
+            {weekEntries.length > 0 && (
+                <View style={styles.statsStrip}>
+                    <View style={styles.statItem}>
+                        <Smile size={s(13)} color="#0ea5e9" />
+                        <Text style={styles.statValue}>
+                            {avgMood!.toFixed(1)}<Text style={styles.statUnit}>/5</Text>
+                        </Text>
+                        <Text style={styles.statLabel}>Avg Mood</Text>
+                    </View>
+                    <View style={styles.statDivider} />
+                    <View style={styles.statItem}>
+                        <Moon size={s(13)} color="#818cf8" />
+                        <Text style={styles.statValue}>
+                            {avgSleep!.toFixed(1)}<Text style={styles.statUnit}>h</Text>
+                        </Text>
+                        <Text style={styles.statLabel}>Avg Sleep</Text>
+                    </View>
+                    <View style={styles.statDivider} />
+                    <View style={styles.statItem}>
+                        <Calendar size={s(13)} color="#34d399" />
+                        <Text style={styles.statValue}>
+                            {weekEntries.length}<Text style={styles.statUnit}>/7</Text>
+                        </Text>
+                        <Text style={styles.statLabel}>Days</Text>
+                    </View>
+                    <View style={styles.moodDotsWrap}>
+                        {[...weekEntries].reverse().map((e, i) => (
+                            <View key={i} style={[styles.moodDot, { backgroundColor: moodColor(e.moodLevel) }]} />
+                        ))}
+                    </View>
+                </View>
+            )}
+
+            <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+
+                {/* Loading */}
+                {isLoading && (
+                    <View style={styles.centerBox}>
+                        <ActivityIndicator size="large" color="#0ea5e9" />
+                        <Text style={styles.loadingText}>Analyzing your week...</Text>
                     </View>
                 )}
 
-                {/* Completed messages */}
-                {messages.map((msg, index) => (
-                    msg.type === 'user' ? (
-                        /* ── User bubble: compact, right-aligned ── */
-                        <View key={index} style={styles.userMessageContainer}>
-                            <View style={styles.userMessageBubble}>
-                                <Text style={styles.userMessageText}>{msg.content}</Text>
-                            </View>
-                            <View style={styles.userAvatar}>
-                                <UserAvatar size={44} />
-                            </View>
-                        </View>
-                    ) : (
-                        /* ── AI bubble: avatar + full-width content ── */
-                        <View key={index} style={styles.messageContainer}>
+                {/* Error */}
+                {error && !isLoading && (
+                    <View style={styles.errorBox}>
+                        <Text style={styles.errorText}>{error}</Text>
+                    </View>
+                )}
+
+                {/* Assessment card */}
+                {(assessment.length > 0 || isStreaming) && !error && (
+                    <View style={styles.aiCard}>
+                        <View style={styles.cardHeader}>
                             <View style={styles.aiAvatar}>
-                                <Sparkles size={20} color="#0ea5e9" />
+                                <Sparkles size={s(16)} color="#0ea5e9" />
                             </View>
-                            <View style={styles.messageContent}>
-                                <View style={styles.messageHeader}>
-                                    <Text style={styles.messageSender}>Pulse AI</Text>
-                                    <Text style={styles.messageTime}>{formatTime(msg.timestamp)}</Text>
-                                </View>
-                                <View style={styles.messageBubble}>
-                                    <Text style={styles.messageText}>{msg.content}</Text>
-                                    <View style={styles.feedbackContainer}>
-                                        <TouchableOpacity style={styles.feedbackButton}>
-                                            <ThumbsUp size={18} color="#64748b" />
-                                        </TouchableOpacity>
-                                        <TouchableOpacity style={styles.feedbackButton}>
-                                            <ThumbsDown size={18} color="#64748b" />
-                                        </TouchableOpacity>
-                                        <TouchableOpacity style={styles.feedbackButton}>
-                                            <Copy size={18} color="#64748b" />
-                                        </TouchableOpacity>
-                                    </View>
-                                </View>
-                            </View>
+                            <Text style={styles.cardLabel}>Pulse AI</Text>
                         </View>
-                    )
+                        {assessment.length === 0 ? (
+                            <View style={styles.loadingRow}>
+                                <ActivityIndicator size="small" color="#0ea5e9" />
+                                <Text style={styles.loadingText}>Thinking...</Text>
+                            </View>
+                        ) : (
+                            <Text style={styles.aiText}>
+                                {assessment}{isStreaming ? '▌' : ''}
+                            </Text>
+                        )}
+                    </View>
+                )}
+
+                {/* Completed follow-ups */}
+                {completedFollowUps.map((fu, i) => (
+                    <View key={i}>
+                        <View style={styles.userBubble}>
+                            <Text style={styles.userBubbleText}>{fu.question}</Text>
+                        </View>
+                        <View style={styles.aiCard}>
+                            <View style={styles.cardHeader}>
+                                <View style={styles.aiAvatar}>
+                                    <Sparkles size={s(16)} color="#0ea5e9" />
+                                </View>
+                                <Text style={styles.cardLabel}>Pulse AI</Text>
+                            </View>
+                            <Text style={styles.aiText}>{fu.answer}</Text>
+                        </View>
+                    </View>
                 ))}
 
-                {/* In-progress streaming message */}
-                {isStreaming && (
-                    <View style={styles.messageContainer}>
-                        <View style={styles.aiAvatar}>
-                            <Sparkles size={20} color="#0ea5e9" />
+                {/* Currently streaming follow-up */}
+                {pendingQuestion && (
+                    <>
+                        <View style={styles.userBubble}>
+                            <Text style={styles.userBubbleText}>{pendingQuestion}</Text>
                         </View>
-                        <View style={styles.messageContent}>
-                            <View style={styles.messageHeader}>
-                                <Text style={styles.messageSender}>Pulse AI</Text>
-                                <Text style={styles.messageTime}>{formatTime(new Date().toISOString())}</Text>
+                        <View style={styles.aiCard}>
+                            <View style={styles.cardHeader}>
+                                <View style={styles.aiAvatar}>
+                                    <Sparkles size={s(16)} color="#0ea5e9" />
+                                </View>
+                                <Text style={styles.cardLabel}>Pulse AI</Text>
                             </View>
-                            <View style={styles.messageBubble}>
-                                {streamedMessage.length === 0 ? (
-                                    <View style={styles.loadingContainer}>
-                                        <ActivityIndicator size="small" color="#0ea5e9" />
-                                        <Text style={styles.loadingText}>Thinking...</Text>
-                                    </View>
-                                ) : (
-                                    <Text style={styles.messageText}>{streamedMessage}▌</Text>
-                                )}
-                            </View>
+                            {streamingAnswer.length === 0 ? (
+                                <View style={styles.loadingRow}>
+                                    <ActivityIndicator size="small" color="#0ea5e9" />
+                                    <Text style={styles.loadingText}>Thinking...</Text>
+                                </View>
+                            ) : (
+                                <Text style={styles.aiText}>
+                                    {streamingAnswer}{isFollowUpStreaming ? '▌' : ''}
+                                </Text>
+                            )}
                         </View>
-                    </View>
+                    </>
                 )}
 
-                {/* Stream error */}
-                {streamError && !isStreaming && (
-                    <View style={styles.messageContainer}>
-                        <View style={styles.aiAvatar}>
-                            <Sparkles size={20} color="#0ea5e9" />
-                        </View>
-                        <View style={styles.messageContent}>
-                            <View style={styles.messageHeader}>
-                                <Text style={styles.messageSender}>Pulse AI</Text>
-                                <Text style={styles.messageTime}>{formatTime(new Date().toISOString())}</Text>
-                            </View>
-                            <View style={styles.messageBubble}>
-                                <Text style={styles.messageText}>{streamError}</Text>
-                            </View>
-                        </View>
-                    </View>
-                )}
-
-                {/* Suggested Actions */}
-                <View style={styles.suggestedActionsContainer}>
-                    <Text style={styles.suggestedActionsTitle}>Suggested actions</Text>
-                </View>
-
-                <View style={{ height: 120 }} />
+                <View style={{ height: s(100) }} />
             </ScrollView>
 
-            {/* Input Bar */}
-            <View style={styles.inputContainer}>
-                <TextInput
-                    style={styles.input}
-                    placeholder="Ask a follow up question..."
-                    placeholderTextColor="#64748b"
-                    value={followUpQuestion}
-                    onChangeText={setFollowUpQuestion}
-                    multiline
-                />
-                <TouchableOpacity
-                    style={[
-                        styles.sendButton,
-                        followUpQuestion.trim() && !isStreaming && styles.sendButtonActive,
-                    ]}
-                    onPress={handleSendFollowUp}
-                    disabled={!followUpQuestion.trim() || isStreaming}
-                >
-                    <ArrowUp
-                        size={20}
-                        color={followUpQuestion.trim() && !isStreaming ? '#ffffff' : '#64748b'}
+            {/* Follow-up input */}
+            {!isLoading && !error && assessment.length > 0 && (
+                <View style={styles.inputBar}>
+                    <TextInput
+                        style={styles.input}
+                        placeholder="Ask a follow-up question..."
+                        placeholderTextColor="#475569"
+                        value={followUpText}
+                        onChangeText={setFollowUpText}
+                        multiline
                     />
-                </TouchableOpacity>
-            </View>
-
-            {/* Clear conversation confirmation modal */}
-            <Modal visible={showClearModal} transparent animationType="fade">
-                <View style={styles.modalOverlay}>
-                    <View style={styles.modalBox}>
-                        <Text style={styles.modalTitle}>Clear Conversation</Text>
-                        <Text style={styles.modalBody}>
-                            Are you sure you want to delete today's conversation? This cannot be undone.
-                        </Text>
-                        <View style={styles.modalActions}>
-                            <TouchableOpacity
-                                style={styles.modalBtnCancel}
-                                onPress={() => setShowClearModal(false)}
-                                activeOpacity={0.7}
-                            >
-                                <Text style={styles.modalBtnCancelText}>No</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                                style={styles.modalBtnConfirm}
-                                onPress={confirmClear}
-                                activeOpacity={0.7}
-                            >
-                                <Text style={styles.modalBtnConfirmText}>Yes, Clear</Text>
-                            </TouchableOpacity>
-                        </View>
-                    </View>
+                    <TouchableOpacity
+                        style={[
+                            styles.sendBtn,
+                            followUpText.trim() && !isFollowUpStreaming && !isStreaming && styles.sendBtnActive,
+                        ]}
+                        onPress={handleSendFollowUp}
+                        disabled={!followUpText.trim() || isFollowUpStreaming || isStreaming}
+                    >
+                        <ArrowUp
+                            size={s(18)}
+                            color={followUpText.trim() && !isFollowUpStreaming && !isStreaming ? '#fff' : '#475569'}
+                        />
+                    </TouchableOpacity>
                 </View>
-            </Modal>
+            )}
         </KeyboardAvoidingView>
     );
 }
 
-const lightStyles = StyleSheet.create({
+const styles = StyleSheet.create({
     container: {
         flex: 1,
         backgroundColor: '#0f172a',
@@ -405,274 +410,190 @@ const lightStyles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        paddingHorizontal: 20,
-        paddingTop: 60,
-        paddingBottom: 20,
+        paddingHorizontal: s(20),
+        paddingTop: s(60),
+        paddingBottom: s(16),
+        borderBottomWidth: 1,
+        borderBottomColor: '#1e293b',
     },
-    backButton: {
-        width: 40,
-        height: 40,
+    headerBtn: {
+        width: s(40),
+        height: s(40),
         justifyContent: 'center',
+        alignItems: 'center',
+    },
+    headerCenter: {
         alignItems: 'center',
     },
     headerTitle: {
-        fontSize: 20,
+        fontSize: s(18),
         fontWeight: '700',
         color: '#f8fafc',
     },
-    moreButton: {
-        width: 40,
-        height: 40,
-        justifyContent: 'center',
-        alignItems: 'center',
+    headerSub: {
+        fontSize: s(11),
+        color: '#64748b',
+        marginTop: 2,
     },
-    scrollView: {
+    statsStrip: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: s(20),
+        paddingVertical: s(12),
+        backgroundColor: '#1e293b',
+        borderBottomWidth: 1,
+        borderBottomColor: '#334155',
+        gap: s(12),
+    },
+    statItem: {
+        alignItems: 'center',
+        gap: 2,
+    },
+    statValue: {
+        fontSize: s(15),
+        fontWeight: '700',
+        color: '#f8fafc',
+    },
+    statUnit: {
+        fontSize: s(10),
+        color: '#64748b',
+        fontWeight: '400',
+    },
+    statLabel: {
+        fontSize: s(10),
+        color: '#64748b',
+    },
+    statDivider: {
+        width: 1,
+        height: s(28),
+        backgroundColor: '#334155',
+    },
+    moodDotsWrap: {
+        flex: 1,
+        flexDirection: 'row',
+        justifyContent: 'flex-end',
+        alignItems: 'center',
+        gap: s(4),
+    },
+    moodDot: {
+        width: s(10),
+        height: s(10),
+        borderRadius: s(5),
+    },
+    scroll: {
         flex: 1,
     },
-    contextContainer: {
-        paddingHorizontal: 20,
-        marginBottom: 24,
-        position: 'relative',
+    scrollContent: {
+        padding: s(20),
     },
-    contextTitle: {
-        fontSize: 12,
-        fontWeight: '700',
-        color: '#0ea5e9',
-        letterSpacing: 1,
-        marginBottom: 12,
-    },
-    contextBadges: {
-        flexDirection: 'row',
+    centerBox: {
         alignItems: 'center',
-    },
-    badge: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 6,
-    },
-    badgeText: {
-        fontSize: 18,
-        fontWeight: '600',
-        color: '#f8fafc',
-    },
-    badgeEmoji: {
-        fontSize: 18,
-    },
-    contextDot: {
-        fontSize: 18,
-        color: '#64748b',
-        marginHorizontal: 8,
-    },
-    trendButton: {
-        position: 'absolute',
-        right: 20,
-        top: 30,
-        width: 44,
-        height: 44,
-        borderRadius: 22,
-        backgroundColor: '#1e293b',
         justifyContent: 'center',
+        gap: s(16),
+        paddingVertical: s(60),
+    },
+    loadingText: {
+        fontSize: s(14),
+        color: '#64748b',
+    },
+    loadingRow: {
+        flexDirection: 'row',
         alignItems: 'center',
+        gap: s(10),
+        paddingVertical: s(4),
+    },
+    errorBox: {
+        backgroundColor: '#450a0a',
+        borderRadius: s(16),
+        padding: s(20),
+        borderWidth: 1,
+        borderColor: '#7f1d1d',
+    },
+    errorText: {
+        fontSize: s(14),
+        color: '#fca5a5',
+        lineHeight: s(22),
+    },
+    aiCard: {
+        backgroundColor: '#1e293b',
+        borderRadius: s(20),
+        padding: s(20),
+        marginBottom: s(16),
         borderWidth: 1,
         borderColor: '#334155',
     },
-    messageContainer: {
+    cardHeader: {
         flexDirection: 'row',
-        paddingHorizontal: 20,
-        marginBottom: 24,
-    },
-    userMessageContainer: {
-        flexDirection: 'row',
-        justifyContent: 'flex-end',
-        paddingHorizontal: 20,
-        marginBottom: 24,
+        alignItems: 'center',
+        gap: s(10),
+        marginBottom: s(14),
     },
     aiAvatar: {
-        width: 44,
-        height: 44,
-        borderRadius: 22,
+        width: s(32),
+        height: s(32),
+        borderRadius: s(16),
         backgroundColor: '#1e3a5f',
         justifyContent: 'center',
         alignItems: 'center',
-        marginRight: 12,
     },
-    userAvatar: {
-        width: 44,
-        height: 44,
-        borderRadius: 22,
-        backgroundColor: '#0ea5e9',
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginLeft: 12,
-    },
-    userAvatarText: {
-        color: '#ffffff',
-        fontSize: 14,
+    cardLabel: {
+        fontSize: s(13),
         fontWeight: '600',
-    },
-    messageContent: {
-        flex: 1,
-    },
-    messageHeader: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: 8,
-    },
-    messageSender: {
-        fontSize: 14,
-        fontWeight: '600',
-        color: '#f8fafc',
-    },
-    messageTime: {
-        fontSize: 12,
-        color: '#64748b',
-    },
-    loadingContainer: {
-        padding: 20,
-        alignItems: 'center',
-        flexDirection: 'row',
-        gap: 12,
-    },
-    loadingText: {
-        fontSize: 14,
         color: '#94a3b8',
     },
-    messageBubble: {
-        backgroundColor: '#1e293b',
-        borderRadius: 16,
-        padding: 20,
-        borderWidth: 1,
-        borderColor: '#334155',
-    },
-    userMessageBubble: {
-        backgroundColor: '#0ea5e9',
-        borderRadius: 18,
-        borderBottomRightRadius: 4,
-        paddingHorizontal: 16,
-        paddingVertical: 12,
-        maxWidth: '75%',
-    },
-    messageText: {
-        fontSize: 15,
-        lineHeight: 24,
+    aiText: {
+        fontSize: s(14),
+        lineHeight: s(24),
         color: '#e2e8f0',
     },
-    userMessageText: {
-        fontSize: 15,
-        lineHeight: 24,
-        color: '#ffffff',
+    userBubble: {
+        alignSelf: 'flex-end',
+        backgroundColor: '#0ea5e9',
+        borderRadius: s(18),
+        borderBottomRightRadius: s(4),
+        paddingHorizontal: s(16),
+        paddingVertical: s(12),
+        maxWidth: '80%',
+        marginBottom: s(12),
     },
-    feedbackContainer: {
-        flexDirection: 'row',
-        gap: 8,
-        marginTop: 16,
+    userBubbleText: {
+        fontSize: s(14),
+        color: '#fff',
+        lineHeight: s(22),
     },
-    feedbackButton: {
-        width: 36,
-        height: 36,
-        borderRadius: 8,
-        backgroundColor: '#334155',
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    suggestedActionsContainer: {
-        paddingHorizontal: 20,
-    },
-    suggestedActionsTitle: {
-        fontSize: 14,
-        color: '#64748b',
-    },
-    inputContainer: {
+    inputBar: {
         flexDirection: 'row',
         alignItems: 'center',
-        paddingHorizontal: 16,
-        paddingVertical: 12,
+        paddingHorizontal: s(16),
+        paddingVertical: s(12),
         backgroundColor: '#0f172a',
         borderTopWidth: 1,
         borderTopColor: '#1e293b',
-        gap: 10,
+        gap: s(10),
     },
     input: {
         flex: 1,
         backgroundColor: '#1e293b',
-        borderRadius: 20,
-        paddingHorizontal: 16,
-        paddingVertical: 10,
-        fontSize: 15,
+        borderRadius: s(20),
+        paddingHorizontal: s(16),
+        paddingVertical: s(10),
+        fontSize: s(14),
         color: '#f8fafc',
-        maxHeight: 100,
-    },
-    sendButton: {
-        width: 40,
-        height: 40,
-        borderRadius: 20,
-        backgroundColor: '#334155',
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    sendButtonActive: {
-        backgroundColor: '#0ea5e9',
-    },
-    modalOverlay: {
-        flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.6)',
-        justifyContent: 'center',
-        alignItems: 'center',
-        paddingHorizontal: 32,
-    },
-    modalBox: {
-        backgroundColor: '#1e293b',
-        borderRadius: 20,
-        padding: 24,
-        width: '100%',
+        maxHeight: s(100),
         borderWidth: 1,
         borderColor: '#334155',
     },
-    modalTitle: {
-        fontSize: 18,
-        fontWeight: '700',
-        color: '#f8fafc',
-        marginBottom: 10,
-    },
-    modalBody: {
-        fontSize: 14,
-        color: '#94a3b8',
-        lineHeight: 22,
-        marginBottom: 24,
-    },
-    modalActions: {
-        flexDirection: 'row',
-        gap: 12,
-    },
-    modalBtnCancel: {
-        flex: 1,
-        paddingVertical: 12,
-        borderRadius: 12,
+    sendBtn: {
+        width: s(40),
+        height: s(40),
+        borderRadius: s(20),
         backgroundColor: '#334155',
+        justifyContent: 'center',
         alignItems: 'center',
     },
-    modalBtnCancelText: {
-        fontSize: 15,
-        fontWeight: '600',
-        color: '#f8fafc',
+    sendBtnActive: {
+        backgroundColor: '#0ea5e9',
     },
-    modalBtnConfirm: {
-        flex: 1,
-        paddingVertical: 12,
-        borderRadius: 12,
-        backgroundColor: '#ef4444',
-        alignItems: 'center',
-    },
-    modalBtnConfirmText: {
-        fontSize: 15,
-        fontWeight: '600',
-        color: '#ffffff',
-    },
-});
-
-const darkStyles = StyleSheet.create({
-    ...lightStyles,
 });
 
 export { DailyPulseAI };

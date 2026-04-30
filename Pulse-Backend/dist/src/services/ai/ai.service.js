@@ -5,6 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.streamGroq = streamGroq;
 exports.generateReflection = generateReflection;
+exports.generateWeeklyAssessment = generateWeeklyAssessment;
 exports.generateAIResponse = generateAIResponse;
 const generative_ai_1 = require("@google/generative-ai");
 const openai_1 = __importDefault(require("openai"));
@@ -219,6 +220,61 @@ One-line reflection:`;
     if (provider === 'groq')
         return generateWithGroq(prompt);
     return generateWithOllama(prompt);
+}
+// ---------------------------------------------------------------------------
+// Weekly wellness assessment
+// ---------------------------------------------------------------------------
+function buildWeeklyAssessmentPrompt(weekHistory, followUpQuestion, previousAssessment) {
+    const dataLines = weekHistory.map(e => {
+        const d = new Date(e.date + 'T00:00:00Z');
+        const day = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
+        return `${day}: Mood ${e.moodLevel}/5 (${e.moodLabel}), Sleep ${e.sleepDuration}h, Pulse Score ${e.pulseScore}`;
+    }).join('\n');
+    if (followUpQuestion && previousAssessment) {
+        return `You are Pulse, a personal AI wellness coach. You previously delivered this weekly assessment:
+
+${previousAssessment}
+
+The user has a follow-up question: "${followUpQuestion}"
+
+Answer directly and specifically in 2-4 sentences. Reference the data where relevant. Sound like a caring, knowledgeable coach — warm but grounded. No markdown symbols.
+
+Pulse:`;
+    }
+    return `You are Pulse, a personal AI wellness coach. Analyze the user's week of health data and deliver a concise, insightful wellness assessment.
+
+Week data (newest first):
+${dataLines}
+
+Write the assessment using exactly these four labeled sections. Each section is a single short paragraph. No markdown symbols (no **, ##, or bullet points). Plain text only.
+
+Overall: [2 sentences summing up the week based on the numbers — mood trajectory, sleep adequacy, overall pattern]
+
+Mood: [2 sentences on the mood pattern — what the data shows about consistency, highs, lows, and what might be driving them]
+
+Sleep: [2 sentences on sleep quality — whether it met the 7-9h target, how it correlates with mood if notable]
+
+Your Focus This Week: [1 specific, actionable recommendation grounded in the actual data — not generic advice]
+
+Guidelines:
+- Be specific to the actual numbers, not generic wellness tips
+- Sound like a caring coach who genuinely reviewed the data
+- 150-200 words total
+
+Pulse:`;
+}
+async function* generateWeeklyAssessment(weekHistory, followUpQuestion, previousAssessment) {
+    const provider = (process.env.AI_PROVIDER ?? 'ollama');
+    const prompt = buildWeeklyAssessmentPrompt(weekHistory, followUpQuestion, previousAssessment);
+    if (provider === 'gemini') {
+        yield* streamGemini(prompt);
+    }
+    else if (provider === 'groq') {
+        yield* streamGroq(prompt);
+    }
+    else {
+        yield* streamOllama(prompt);
+    }
 }
 // ---------------------------------------------------------------------------
 // Public entry point — delegates to the active provider

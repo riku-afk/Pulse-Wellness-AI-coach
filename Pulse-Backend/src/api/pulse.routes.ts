@@ -46,6 +46,30 @@ function moodStabilityLabel(moodValues: number[]): 'High' | 'Medium' | 'Low' {
     return 'Low';
 }
 
+function computeStreakDays(datesDescending: string[]): number {
+    if (datesDescending.length === 0) return 0;
+
+    const todayStr = todayDateString();
+    const yest = new Date();
+    yest.setUTCDate(yest.getUTCDate() - 1);
+    const yesterdayStr = yest.toISOString().split('T')[0];
+
+    // Streak is alive only if the user logged today or yesterday (grace period)
+    const mostRecent = datesDescending[0];
+    if (mostRecent !== todayStr && mostRecent !== yesterdayStr) return 0;
+
+    const dateSet = new Set(datesDescending);
+    let streak = 0;
+    const cursor = new Date(mostRecent + 'T00:00:00Z');
+
+    while (dateSet.has(cursor.toISOString().split('T')[0])) {
+        streak++;
+        cursor.setUTCDate(cursor.getUTCDate() - 1);
+    }
+
+    return streak;
+}
+
 router.post('/log', async (req: Request, res: Response) => {
     const { userId, moodLevel, moodLabel, sleepDuration, pulseScore } = req.body;
     const token = req.headers.authorization?.split('Bearer ')[1];
@@ -99,12 +123,12 @@ router.get('/:userId/summary', async (req: Request, res: Response) => {
     const token = req.headers.authorization?.split('Bearer ')[1];
 
     try {
-        // Query last 7 dailyPulse docs ordered by date descending
+        // Fetch up to 60 entries for streak computation; chart data uses the most recent 7
         const queryBody = {
             structuredQuery: {
                 from: [{ collectionId: 'dailyPulse' }],
                 orderBy: [{ field: { fieldPath: 'date' }, direction: 'DESCENDING' }],
-                limit: 7,
+                limit: 60,
             },
         };
 
@@ -135,38 +159,47 @@ router.get('/:userId/summary', async (req: Request, res: Response) => {
 
         if (docs.length === 0) {
             res.json({
-                avgSleep: 0,
-                totalSleepDebt: 0,
-                moodStability: 'High',
-                moodBars: [],
-                sleepBars: [],
-                debtDots: [],
-                hasData: false,
+                avgSleep: 0, totalSleepDebt: 0, moodStability: 'High',
+                moodBars: [], sleepBars: [], debtDots: [], hasData: false,
+                streakDays: 0, avgMood: null, daysLogged: 0,
+                avgMoodPrev: null, avgSleepPrev: null,
             });
             return;
         }
 
-        // Results are newest-first — reverse to chronological for chart arrays
-        const chronological = [...docs].reverse();
+        // Streak — computed from all fetched dates (newest-first)
+        const allDates = docs.map(d => d.date?.stringValue ?? '').filter(Boolean);
+        const streakDays = computeStreakDays(allDates);
 
-        const sleepValues = chronological.map(d => d.sleepDuration?.doubleValue ?? 0);
-        const moodValues = chronological.map(d => parseInt(d.moodLevel?.integerValue ?? '0', 10));
-        const debtValues = chronological.map(d => parseInt(d.sleepDebt?.integerValue ?? '0', 10));
+        // This week — most recent 7 logged entries, reversed to chronological for charts
+        const thisWeekDocs = docs.slice(0, 7);
+        const chartDocs = [...thisWeekDocs].reverse();
 
-        const avgSleep = parseFloat(
-            (sleepValues.reduce((a, b) => a + b, 0) / sleepValues.length).toFixed(1)
-        );
+        const sleepValues = chartDocs.map(d => d.sleepDuration?.doubleValue ?? 0);
+        const moodValues = chartDocs.map(d => parseInt(d.moodLevel?.integerValue ?? '0', 10));
+        const debtValues = chartDocs.map(d => parseInt(d.sleepDebt?.integerValue ?? '0', 10));
+
+        const avgSleep = parseFloat((sleepValues.reduce((a, b) => a + b, 0) / sleepValues.length).toFixed(1));
         const totalSleepDebt = debtValues.reduce((a, b) => a + b, 0);
         const moodStability = moodStabilityLabel(moodValues);
+        const avgMood = parseFloat((moodValues.reduce((a, b) => a + b, 0) / moodValues.length).toFixed(1));
+        const daysLogged = thisWeekDocs.length;
+
+        // Previous 7 logged entries for week-over-week comparison
+        const prevDocs = docs.slice(7, 14);
+        const prevMoodValues = prevDocs.map(d => parseInt(d.moodLevel?.integerValue ?? '0', 10));
+        const prevSleepValues = prevDocs.map(d => d.sleepDuration?.doubleValue ?? 0);
+        const avgMoodPrev = prevDocs.length > 0
+            ? parseFloat((prevMoodValues.reduce((a, b) => a + b, 0) / prevMoodValues.length).toFixed(1))
+            : null;
+        const avgSleepPrev = prevDocs.length > 0
+            ? parseFloat((prevSleepValues.reduce((a, b) => a + b, 0) / prevSleepValues.length).toFixed(1))
+            : null;
 
         res.json({
-            avgSleep,
-            totalSleepDebt,
-            moodStability,
-            moodBars: moodValues,
-            sleepBars: sleepValues,
-            debtDots: debtValues,
-            hasData: true,
+            avgSleep, totalSleepDebt, moodStability,
+            moodBars: moodValues, sleepBars: sleepValues, debtDots: debtValues,
+            hasData: true, streakDays, avgMood, daysLogged, avgMoodPrev, avgSleepPrev,
         });
     } catch (error) {
         res.status(500).json({ error: 'Failed to fetch pulse summary' });
@@ -208,16 +241,17 @@ router.patch('/:userId/ai/:date', async (req: Request, res: Response) => {
     }
 });
 
-// Get last 5 pulse entries with full data including AI suggestion
+// Get last N pulse entries with full data including AI suggestion (default 5, max 7)
 router.get('/:userId/recent', async (req: Request, res: Response) => {
     const { userId } = req.params;
     const token = req.headers.authorization?.split('Bearer ')[1];
+    const limit = Math.min(7, Math.max(1, parseInt((req.query.limit as string) ?? '5', 10)));
 
     const queryBody = {
         structuredQuery: {
             from: [{ collectionId: 'dailyPulse' }],
             orderBy: [{ field: { fieldPath: 'date' }, direction: 'DESCENDING' }],
-            limit: 5,
+            limit,
         },
     };
 

@@ -1,5 +1,3 @@
-import { Platform } from 'react-native';
-
 const BACKEND_URL = 'https://pulse-wellness-ai-coach-production.up.railway.app';
 
 export interface PulseData {
@@ -54,6 +52,7 @@ function processSSEChunk(
 // XHR-based streaming — works on Android/iOS (Hermes has no ReadableStream)
 // ---------------------------------------------------------------------------
 function streamViaXHR(
+    url: string,
     body: string,
     onChunk: (text: string) => void,
     onDone: (() => void) | undefined,
@@ -61,7 +60,7 @@ function streamViaXHR(
 ): Promise<void> {
     return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
-        xhr.open('POST', `${BACKEND_URL}/api/v1/ai/chat`);
+        xhr.open('POST', url);
         xhr.setRequestHeader('Content-Type', 'application/json');
 
         let cursor = 0;
@@ -112,12 +111,13 @@ function streamViaXHR(
 // Fetch-based streaming — works in browsers (web)
 // ---------------------------------------------------------------------------
 async function streamViaFetch(
+    url: string,
     body: string,
     onChunk: (text: string) => void,
     onDone: (() => void) | undefined,
     signal: AbortSignal | undefined,
 ): Promise<void> {
-    const response = await fetch(`${BACKEND_URL}/api/v1/ai/chat`, {
+    const response = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body,
@@ -146,9 +146,30 @@ async function streamViaFetch(
     }
 }
 
+function doStream(
+    url: string,
+    body: string,
+    onChunk: (text: string) => void,
+    onDone: (() => void) | undefined,
+    signal: AbortSignal | undefined,
+): Promise<void> {
+    if (typeof ReadableStream !== 'undefined') {
+        return streamViaFetch(url, body, onChunk, onDone, signal);
+    }
+    return streamViaXHR(url, body, onChunk, onDone, signal);
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
+export interface WeekEntry {
+    date: string;
+    moodLevel: number;
+    moodLabel: string;
+    sleepDuration: number;
+    pulseScore: number;
+}
+
 export async function streamAIResponse(
     userMessage: string,
     pulseData: PulseData | undefined,
@@ -158,10 +179,17 @@ export async function streamAIResponse(
     signal?: AbortSignal,
 ): Promise<void> {
     const body = JSON.stringify({ userMessage, pulseData, conversationHistory });
+    return doStream(`${BACKEND_URL}/api/v1/ai/chat`, body, onChunk, onDone, signal);
+}
 
-    // React Native (Android/iOS) doesn't support ReadableStream — use XHR instead
-    if (Platform.OS === 'android' || Platform.OS === 'ios') {
-        return streamViaXHR(body, onChunk, onDone, signal);
-    }
-    return streamViaFetch(body, onChunk, onDone, signal);
+export async function streamWeeklyAssessment(
+    weekHistory: WeekEntry[],
+    onChunk: (text: string) => void,
+    onDone?: () => void,
+    signal?: AbortSignal,
+    followUpQuestion?: string,
+    previousAssessment?: string,
+): Promise<void> {
+    const body = JSON.stringify({ weekHistory, followUpQuestion, previousAssessment });
+    return doStream(`${BACKEND_URL}/api/v1/ai/assess`, body, onChunk, onDone, signal);
 }

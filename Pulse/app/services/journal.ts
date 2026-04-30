@@ -48,6 +48,20 @@ export async function getJournalEntries(
     return json as JournalPage;
 }
 
+export async function searchJournalEntries(
+    userId: string,
+    token: string,
+    q: string
+): Promise<JournalEntry[]> {
+    const response = await fetch(
+        `${BACKEND_URL}/api/v1/journal/search?userId=${encodeURIComponent(userId)}&q=${encodeURIComponent(q)}`,
+        { headers: { 'Authorization': `Bearer ${token}` } }
+    );
+    const json = await response.json();
+    if (!response.ok) throw new Error(json.error || 'Search failed');
+    return (json as { entries: JournalEntry[] }).entries;
+}
+
 export async function getJournalEntry(
     userId: string,
     token: string,

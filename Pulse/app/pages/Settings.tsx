@@ -9,7 +9,6 @@ import { LogOut, Bell, User, ChevronRight, Shield } from 'lucide-react-native';
 import { logout } from '../services/auth';
 import { setNotificationPreference } from '../services/notifications';
 import { useAppStore } from '../store/appStore';
-import BackButton from '../components/BackButton';
 import UserAvatar from '../components/UserAvatar';
 
 const { width: SW } = require('react-native').Dimensions.get('window');
@@ -68,7 +67,6 @@ export default function Settings() {
             >
                 {/* ── Header ── */}
                 <View style={styles.header}>
-                    <BackButton />
                     <Text style={styles.pageTitle}>Settings</Text>
                 </View>
 

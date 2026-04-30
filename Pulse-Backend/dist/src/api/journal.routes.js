@@ -135,6 +135,49 @@ router.get('/', async (req, res) => {
         res.status(500).json({ error: 'Failed to fetch journal entries' });
     }
 });
+// GET /api/v1/journal/search?userId=...&q=... — full-text search across all entries
+// Must be registered before /:date so Express doesn't treat "search" as a date param
+router.get('/search', async (req, res) => {
+    const { userId, q } = req.query;
+    const token = req.headers.authorization?.split('Bearer ')[1];
+    if (!userId || !q?.trim()) {
+        res.status(400).json({ error: 'userId and q are required' });
+        return;
+    }
+    const keyword = q.trim().toLowerCase();
+    const queryBody = {
+        structuredQuery: {
+            from: [{ collectionId: 'journal' }],
+            orderBy: [{ field: { fieldPath: 'date' }, direction: 'DESCENDING' }],
+            limit: 200,
+        },
+    };
+    try {
+        const response = await fetch(`${FIRESTORE_BASE_URL}/users/${userId}:runQuery`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(queryBody),
+        });
+        if (!response.ok) {
+            const err = await response.json();
+            res.status(400).json({ error: err.error?.message || 'Search failed' });
+            return;
+        }
+        const results = await response.json();
+        const all = results
+            .filter(r => r.document?.fields)
+            .map(r => parseEntry(r.document.fields));
+        const matches = all.filter(e => e.content.toLowerCase().includes(keyword) ||
+            e.date.includes(keyword));
+        res.json({ entries: matches, total: matches.length });
+    }
+    catch (error) {
+        res.status(500).json({ error: 'Search failed' });
+    }
+});
 // GET /api/v1/journal/:date?userId=... — fetch one entry by date
 router.get('/:date', async (req, res) => {
     const { date } = req.params;

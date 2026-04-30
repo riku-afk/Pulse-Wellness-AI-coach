@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
+const firebase_admin_1 = require("../config/firebase-admin");
 const router = (0, express_1.Router)();
 const FIREBASE_WEB_API_KEY = process.env.FIREBASE_WEB_API_KEY;
 const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID;
@@ -58,7 +59,17 @@ router.post('/login', async (req, res) => {
         res.status(500).json({ error: 'Failed to log in user' });
     }
 });
-router.post('/logout', (_req, res) => {
+router.post('/logout', async (req, res) => {
+    const { userId } = req.body;
+    if (userId) {
+        const db = (0, firebase_admin_1.getAdminDb)();
+        if (db) {
+            // Clear only the FCM token so this device no longer receives pushes for this user.
+            // notificationsEnabled is left untouched — it reflects the user's preference, not the device state.
+            await db.collection('users').doc(userId).update({ fcmToken: null })
+                .catch(e => console.error(`[Auth] Failed to clear FCM token for ${userId}:`, e));
+        }
+    }
     res.json({ message: 'Logged out successfully' });
 });
 router.get('/profile/check/:userId', async (req, res) => {

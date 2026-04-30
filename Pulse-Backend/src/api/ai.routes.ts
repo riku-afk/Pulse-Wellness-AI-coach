@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { generateAIResponse, PulseData, ConversationMessage } from '../services/ai/ai.service';
+import { generateAIResponse, generateWeeklyAssessment, PulseData, ConversationMessage, WeekEntry } from '../services/ai/ai.service';
 
 const router = Router();
 
@@ -34,6 +34,34 @@ router.post('/chat', async (req: Request, res: Response) => {
     } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         console.error('[AI] Streaming error:', msg, error);
+        res.write('data: [ERROR]\n\n');
+    } finally {
+        res.end();
+    }
+});
+
+router.post('/assess', async (req: Request, res: Response) => {
+    const { weekHistory, followUpQuestion, previousAssessment } = req.body as {
+        weekHistory: WeekEntry[];
+        followUpQuestion?: string;
+        previousAssessment?: string;
+    };
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders();
+
+    try {
+        for await (const chunk of generateWeeklyAssessment(weekHistory, followUpQuestion, previousAssessment)) {
+            res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+            (res as unknown as { flush?: () => void }).flush?.();
+        }
+        res.write('data: [DONE]\n\n');
+    } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        console.error('[AI] Weekly assessment error:', msg, error);
         res.write('data: [ERROR]\n\n');
     } finally {
         res.end();

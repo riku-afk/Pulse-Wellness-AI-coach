@@ -30,4 +30,27 @@ router.post('/chat', async (req, res) => {
         res.end();
     }
 });
+router.post('/assess', async (req, res) => {
+    const { weekHistory, followUpQuestion, previousAssessment } = req.body;
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders();
+    try {
+        for await (const chunk of (0, ai_service_1.generateWeeklyAssessment)(weekHistory, followUpQuestion, previousAssessment)) {
+            res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+            res.flush?.();
+        }
+        res.write('data: [DONE]\n\n');
+    }
+    catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        console.error('[AI] Weekly assessment error:', msg, error);
+        res.write('data: [ERROR]\n\n');
+    }
+    finally {
+        res.end();
+    }
+});
 exports.default = router;

@@ -15,6 +15,11 @@ export interface PulseSummary {
     sleepBars: number[];
     debtDots: number[];
     hasData: boolean;
+    streakDays: number;
+    avgMood: number | null;
+    daysLogged: number;
+    avgMoodPrev: number | null;
+    avgSleepPrev: number | null;
 }
 
 export interface RecentPulseEntry {
@@ -73,9 +78,10 @@ export async function getPulseSummary(
 
 export async function getRecentPulse(
     userId: string,
-    token: string
+    token: string,
+    limit: number = 5
 ): Promise<RecentPulseEntry[]> {
-    const response = await fetch(`${BACKEND_URL}/api/v1/pulse/${userId}/recent`, {
+    const response = await fetch(`${BACKEND_URL}/api/v1/pulse/${userId}/recent?limit=${limit}`, {
         headers: { 'Authorization': `Bearer ${token}` },
     });
 

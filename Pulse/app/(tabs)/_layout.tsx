@@ -1,7 +1,7 @@
 import { Tabs } from 'expo-router';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useColorScheme } from 'react-native';
-import { LayoutDashboard, Bell, Settings, BookOpen } from 'lucide-react-native';
+import { LayoutDashboard, BarChart2, BookOpen, User } from 'lucide-react-native';
 
 export default function TabLayout() {
     const colorScheme = useColorScheme();
@@ -30,17 +30,17 @@ export default function TabLayout() {
                 }}
             >
                 <Tabs.Screen
-                    name="screens/reminders"
+                    name="pages/Dashboard"
                     options={{
-                        title: 'Reminders',
-                        tabBarIcon: ({ color, size }) => <Bell size={size} color={color} />,
+                        title: 'Home',
+                        tabBarIcon: ({ color, size }) => <LayoutDashboard size={size} color={color} />,
                     }}
                 />
                 <Tabs.Screen
-                    name="pages/Dashboard"
+                    name="pages/Insights"
                     options={{
-                        title: 'Dashboard',
-                        tabBarIcon: ({ color, size }) => <LayoutDashboard size={size} color={color} />,
+                        title: 'Insights',
+                        tabBarIcon: ({ color, size }) => <BarChart2 size={size} color={color} />,
                     }}
                 />
                 <Tabs.Screen
@@ -53,8 +53,8 @@ export default function TabLayout() {
                 <Tabs.Screen
                     name="pages/Settings"
                     options={{
-                        title: 'Settings',
-                        tabBarIcon: ({ color, size }) => <Settings size={size} color={color} />,
+                        title: 'Profile',
+                        tabBarIcon: ({ color, size }) => <User size={size} color={color} />,
                     }}
                 />
             </Tabs>

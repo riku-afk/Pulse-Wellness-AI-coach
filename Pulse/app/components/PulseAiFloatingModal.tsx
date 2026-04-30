@@ -32,8 +32,30 @@ export default function PulseAiFloatingModal({ visible, mode, pulseData, existin
     const [isDone, setIsDone] = useState(false);
     const [isStreaming, setIsStreaming] = useState(false);
     const accumulatedRef = useRef('');
+    const charQueueRef = useRef('');      // pending chars waiting to be rendered
+    const networkDoneRef = useRef(false); // true once the SSE stream signals [DONE]
     const abortRef = useRef<AbortController | null>(null);
     const scrollRef = useRef<ScrollView>(null);
+
+    // Typewriter — runs at 30 ms/tick, 4 chars per tick (~130 chars/sec).
+    // Drains charQueueRef regardless of how many SSE chunks arrived,
+    // then finalises once the network stream is also done.
+    useEffect(() => {
+        if (!isStreaming) return;
+        const id = setInterval(() => {
+            if (charQueueRef.current.length > 0) {
+                const chars = charQueueRef.current.slice(0, 4);
+                charQueueRef.current = charQueueRef.current.slice(4);
+                setStreamedText(prev => prev + chars);
+                scrollRef.current?.scrollToEnd({ animated: false });
+            } else if (networkDoneRef.current) {
+                networkDoneRef.current = false;
+                setIsDone(true);
+                setIsStreaming(false);
+            }
+        }, 30);
+        return () => clearInterval(id);
+    }, [isStreaming]);
 
     // Reset and start stream whenever modal opens in stream mode
     useEffect(() => {
@@ -45,8 +67,10 @@ export default function PulseAiFloatingModal({ visible, mode, pulseData, existin
             return;
         }
 
-        // stream mode
+        // stream mode — reset all refs before starting
         accumulatedRef.current = '';
+        charQueueRef.current = '';
+        networkDoneRef.current = false;
         setStreamedText('');
         setIsDone(false);
         setIsStreaming(true);
@@ -69,18 +93,18 @@ export default function PulseAiFloatingModal({ visible, mode, pulseData, existin
             [],
             (chunk) => {
                 accumulatedRef.current += chunk;
-                setStreamedText(accumulatedRef.current);
-                scrollRef.current?.scrollToEnd({ animated: true });
+                charQueueRef.current += chunk; // typewriter drains this
             },
             () => {
-                setIsDone(true);
-                setIsStreaming(false);
+                networkDoneRef.current = true; // interval finalises once queue is empty
             },
             controller.signal
         ).catch((err) => {
             if (err?.name !== 'AbortError') {
                 setStreamedText('Sorry, I couldn\'t generate an insight right now. Try again later.');
             }
+            charQueueRef.current = '';
+            networkDoneRef.current = false;
             setIsDone(true);
             setIsStreaming(false);
         });
