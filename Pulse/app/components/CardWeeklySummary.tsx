@@ -99,7 +99,6 @@ const styles = StyleSheet.create({
         marginBottom: s(16),
         borderRadius: s(20),
         padding: s(20),
-        borderWidth: 1,
     },
     header: {
         flexDirection: 'row',
@@ -146,7 +145,7 @@ const styles = StyleSheet.create({
     },
     statValue: {
         fontSize: s(24),
-        fontWeight: '700',
+        fontWeight: '800',
         marginBottom: s(8),
     },
     trendBadge: {
@@ -172,24 +171,22 @@ const styles = StyleSheet.create({
 const light = StyleSheet.create({
     card: {
         backgroundColor: '#ffffff',
-        borderColor: '#e2e8f0',
-        shadowColor: '#000',
+        shadowColor: '#0f172a',
         shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 8,
-        elevation: 2,
+        shadowOpacity: 0.06,
+        shadowRadius: 10,
+        elevation: 3,
     } as any,
     title: { color: '#0f172a' },
     statBox: { backgroundColor: '#f8fafc' } as any,
     statLabel: { color: '#94a3b8' },
     statValue: { color: '#0f172a' },
-    tagline: { color: '#64748b' },
+    tagline: { color: '#64748b', fontStyle: 'italic' },
 });
 
 const dark = StyleSheet.create({
     card: {
         backgroundColor: '#1e293b',
-        borderColor: '#334155',
     } as any,
     title: { color: '#f8fafc' },
     statBox: { backgroundColor: '#0f172a' } as any,

@@ -9,6 +9,7 @@ import { Moon, Activity, ChevronRight } from 'lucide-react-native';
 import { getPulseSummary, getRecentPulse, PulseSummary, RecentPulseEntry } from '../services/pulse';
 import PulseAiFloatingModal from '../components/PulseAiFloatingModal';
 import { useAppStore } from '../store/appStore';
+import { getCache, setCache } from '../utils/cache';
 
 const { width: SW } = Dimensions.get('window');
 const s = (n: number) => Math.round((SW / 375) * n);
@@ -38,11 +39,17 @@ export default function Insights() {
 
     useFocusEffect(useCallback(() => {
         if (!userId || !token) return;
+        const summaryKey = `pulseSummary_${userId}`;
+        const recentKey = `recentPulse_${userId}`;
+        const cachedSummary = getCache<PulseSummary>(summaryKey);
+        const cachedRecent = getCache<RecentPulseEntry[]>(recentKey);
+        if (cachedSummary) setPulseSummary(cachedSummary);
+        if (cachedRecent) setRecentPulse(cachedRecent);
         getPulseSummary(userId, token)
-            .then(setPulseSummary)
+            .then(data => { setPulseSummary(data); setCache(summaryKey, data); })
             .catch(e => console.error('Insights: summary fetch failed', e));
         getRecentPulse(userId, token)
-            .then(setRecentPulse)
+            .then(data => { setRecentPulse(data); setCache(recentKey, data); })
             .catch(e => console.error('Insights: recent pulse fetch failed', e));
     }, [userId, token]));
 
@@ -276,13 +283,11 @@ const lightStyles = StyleSheet.create({
         backgroundColor: '#ffffff',
         borderRadius: s(20),
         padding: s(20),
-        borderWidth: 1,
-        borderColor: '#e2e8f0',
-        shadowColor: '#000',
+        shadowColor: '#0f172a',
         shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 8,
-        elevation: 2,
+        shadowOpacity: 0.06,
+        shadowRadius: 10,
+        elevation: 3,
     },
     statsRow: {
         flexDirection: 'row',
@@ -295,13 +300,11 @@ const lightStyles = StyleSheet.create({
         backgroundColor: '#ffffff',
         borderRadius: s(20),
         padding: s(16),
-        borderWidth: 1,
-        borderColor: '#e2e8f0',
-        shadowColor: '#000',
+        shadowColor: '#0f172a',
         shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 8,
-        elevation: 2,
+        shadowOpacity: 0.06,
+        shadowRadius: 10,
+        elevation: 3,
     },
     statHeader: {
         flexDirection: 'row',
@@ -404,13 +407,11 @@ const lightStyles = StyleSheet.create({
         borderRadius: s(16),
         padding: s(14),
         marginRight: s(12),
-        borderWidth: 1,
-        borderColor: '#e2e8f0',
-        shadowColor: '#000',
+        shadowColor: '#0f172a',
         shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 8,
-        elevation: 2,
+        shadowOpacity: 0.06,
+        shadowRadius: 10,
+        elevation: 3,
     },
     recentDate: { fontSize: s(11), color: '#94a3b8', fontWeight: '600', marginBottom: s(6) },
     recentScoreRow: {
@@ -452,8 +453,6 @@ const darkStyles = StyleSheet.create({
         backgroundColor: '#1e293b',
         borderRadius: s(20),
         padding: s(20),
-        borderWidth: 1,
-        borderColor: '#334155',
     },
     statsRow: {
         flexDirection: 'row',
@@ -466,8 +465,6 @@ const darkStyles = StyleSheet.create({
         backgroundColor: '#1e293b',
         borderRadius: s(20),
         padding: s(16),
-        borderWidth: 1,
-        borderColor: '#334155',
     },
     statHeader: {
         flexDirection: 'row',
@@ -570,8 +567,6 @@ const darkStyles = StyleSheet.create({
         borderRadius: s(16),
         padding: s(14),
         marginRight: s(12),
-        borderWidth: 1,
-        borderColor: '#334155',
     },
     recentDate: { fontSize: s(11), color: '#64748b', fontWeight: '600', marginBottom: s(6) },
     recentScoreRow: {

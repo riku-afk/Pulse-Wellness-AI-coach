@@ -1,13 +1,14 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
-    View, Text, TextInput, ScrollView, TouchableOpacity,
-    StyleSheet, ActivityIndicator, useColorScheme, KeyboardAvoidingView, Platform,
+    View, Text, TextInput, Pressable, ScrollView,
+    StyleSheet, ActivityIndicator, useColorScheme, KeyboardAvoidingView, Platform, Animated,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, router, useLocalSearchParams } from 'expo-router';
 import { ChevronLeft, Sparkles } from 'lucide-react-native';
 import { useAppStore } from '../store/appStore';
 import { saveJournalEntry, getJournalEntry } from '../services/journal';
+import { clearCacheByPrefix } from '../utils/cache';
 
 const { width: SW } = require('react-native').Dimensions.get('window');
 const s = (n: number) => Math.round((SW / 375) * n);
@@ -51,6 +52,16 @@ export default function JournalEntry() {
     const [isSaving, setIsSaving] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
     const [saveSuccess, setSaveSuccess] = useState(false);
+    const [inputFocused, setInputFocused] = useState(false);
+
+    const pageAnim = useRef(new Animated.Value(0)).current;
+    useEffect(() => {
+        Animated.timing(pageAnim, { toValue: 1, duration: 440, delay: 60, useNativeDriver: true }).start();
+    }, []);
+    const enterStyle = useRef({
+        opacity: pageAnim,
+        transform: [{ translateY: pageAnim.interpolate({ inputRange: [0, 1], outputRange: [s(16), 0] }) }],
+    }).current;
 
     useFocusEffect(useCallback(() => {
         let cancelled = false;
@@ -91,6 +102,7 @@ export default function JournalEntry() {
             });
             setAiReflection(result.aiReflection);
             setSaveSuccess(true);
+            clearCacheByPrefix(`journal_${userId}`);
         } catch (e) {
             console.error('Failed to save journal entry:', e);
         } finally {
@@ -106,15 +118,16 @@ export default function JournalEntry() {
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
             <View style={styles.container}>
+            <Animated.View style={[{ flex: 1 }, enterStyle]}>
                 {/* Header */}
                 <View style={[styles.header, { paddingTop: insets.top + s(12) }]}>
-                    <TouchableOpacity
+                    <Pressable
                         onPress={() => router.back()}
-                        style={styles.backBtn}
+                        style={({ pressed }) => [styles.backBtn, pressed && { opacity: 0.65 }]}
                         hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                     >
                         <ChevronLeft size={s(24)} color={isDark ? '#f8fafc' : '#0f172a'} />
-                    </TouchableOpacity>
+                    </Pressable>
                     <View style={{ flex: 1, paddingHorizontal: s(12) }}>
                         <Text style={styles.dateHeader}>{formatDate(date)}</Text>
                         {isToday && <Text style={styles.todayLabel}>Today</Text>}
@@ -133,7 +146,7 @@ export default function JournalEntry() {
                     >
                         {/* Text input */}
                         <TextInput
-                            style={styles.textInput}
+                            style={[styles.textInput, inputFocused && styles.textInputFocused]}
                             value={content}
                             onChangeText={setContent}
                             multiline
@@ -141,6 +154,8 @@ export default function JournalEntry() {
                             placeholderTextColor={isDark ? '#475569' : '#94a3b8'}
                             textAlignVertical="top"
                             scrollEnabled={false}
+                            onFocus={() => setInputFocused(true)}
+                            onBlur={() => setInputFocused(false)}
                         />
 
                         {/* Mood tag selector */}
@@ -150,15 +165,15 @@ export default function JournalEntry() {
                                 const selected = moodTag === tag;
                                 const color = moodColor(tag);
                                 return (
-                                    <TouchableOpacity
+                                    <Pressable
                                         key={tag}
-                                        style={[
+                                        style={({ pressed }) => [
                                             styles.moodBtn,
                                             selected && { backgroundColor: color, borderColor: color },
                                             !selected && { borderColor: isDark ? '#334155' : '#e2e8f0' },
+                                            pressed && { opacity: 0.72, transform: [{ scale: 0.91 }] },
                                         ]}
                                         onPress={() => setMoodTag(selected ? null : tag)}
-                                        activeOpacity={0.7}
                                     >
                                         <Text style={[
                                             styles.moodBtnText,
@@ -167,7 +182,7 @@ export default function JournalEntry() {
                                         ]}>
                                             {tag}
                                         </Text>
-                                    </TouchableOpacity>
+                                    </Pressable>
                                 );
                             })}
                         </View>
@@ -177,11 +192,14 @@ export default function JournalEntry() {
                         </View>
 
                         {/* Save button */}
-                        <TouchableOpacity
-                            style={[styles.saveBtn, (!content.trim() || isSaving) && styles.saveBtnDisabled]}
+                        <Pressable
+                            style={({ pressed }) => [
+                                styles.saveBtn,
+                                (!content.trim() || isSaving) && styles.saveBtnDisabled,
+                                pressed && { opacity: 0.85 },
+                            ]}
                             onPress={handleSave}
                             disabled={!content.trim() || isSaving}
-                            activeOpacity={0.8}
                         >
                             {isSaving ? (
                                 <ActivityIndicator size="small" color="#ffffff" />
@@ -190,7 +208,7 @@ export default function JournalEntry() {
                                     {saveSuccess ? 'Update Entry' : 'Save Entry'}
                                 </Text>
                             )}
-                        </TouchableOpacity>
+                        </Pressable>
 
                         {/* AI Reflection */}
                         {isSaving && (
@@ -211,6 +229,7 @@ export default function JournalEntry() {
                         )}
                     </ScrollView>
                 )}
+            </Animated.View>
             </View>
         </KeyboardAvoidingView>
     );
@@ -248,7 +267,7 @@ const lightStyles = StyleSheet.create({
     textInput: {
         backgroundColor: '#ffffff',
         borderRadius: s(16),
-        borderWidth: 1,
+        borderWidth: 1.5,
         borderColor: '#e2e8f0',
         padding: s(16),
         fontSize: s(15),
@@ -256,6 +275,10 @@ const lightStyles = StyleSheet.create({
         lineHeight: s(24),
         minHeight: s(200),
         marginBottom: s(24),
+    },
+    textInputFocused: {
+        borderColor: '#0ea5e9',
+        backgroundColor: '#f0f9ff',
     },
     sectionLabel: {
         fontSize: s(13),
@@ -380,7 +403,7 @@ const darkStyles = StyleSheet.create({
     textInput: {
         backgroundColor: '#1e293b',
         borderRadius: s(16),
-        borderWidth: 1,
+        borderWidth: 1.5,
         borderColor: '#334155',
         padding: s(16),
         fontSize: s(15),
@@ -388,6 +411,10 @@ const darkStyles = StyleSheet.create({
         lineHeight: s(24),
         minHeight: s(200),
         marginBottom: s(24),
+    },
+    textInputFocused: {
+        borderColor: '#0ea5e9',
+        backgroundColor: '#0c2233',
     },
     sectionLabel: {
         fontSize: s(13),

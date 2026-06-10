@@ -63,7 +63,6 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         gap: s(14),
-        borderWidth: 1,
     },
     iconBox: {
         width: s(48),
@@ -87,17 +86,17 @@ const styles = StyleSheet.create({
         marginBottom: s(6),
     },
     count: {
-        fontSize: s(28),
-        fontWeight: '700',
-        lineHeight: s(32),
+        fontSize: s(30),
+        fontWeight: '800',
+        lineHeight: s(34),
     },
     unit: {
         fontSize: s(14),
         fontWeight: '600',
     },
     progressTrack: {
-        height: s(4),
-        borderRadius: s(2),
+        height: s(5),
+        borderRadius: s(3),
         overflow: 'hidden',
         marginBottom: s(4),
     },
@@ -120,12 +119,11 @@ const styles = StyleSheet.create({
 const light = StyleSheet.create({
     card: {
         backgroundColor: '#ffffff',
-        borderColor: '#e2e8f0',
-        shadowColor: '#000',
+        shadowColor: '#0f172a',
         shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 8,
-        elevation: 2,
+        shadowOpacity: 0.06,
+        shadowRadius: 10,
+        elevation: 3,
     } as any,
     label: { color: '#94a3b8' },
     unit: { color: '#64748b' },
@@ -137,7 +135,6 @@ const light = StyleSheet.create({
 const dark = StyleSheet.create({
     card: {
         backgroundColor: '#1e293b',
-        borderColor: '#334155',
     } as any,
     label: { color: '#64748b' },
     unit: { color: '#94a3b8' },

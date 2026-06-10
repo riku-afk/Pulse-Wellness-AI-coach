@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import {
-    View, Text, TouchableOpacity, StyleSheet,
+    View, Text, Pressable, StyleSheet,
     useColorScheme, Switch, ScrollView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -63,7 +63,7 @@ export default function Settings() {
         <View style={styles.container}>
             <ScrollView
                 showsVerticalScrollIndicator={false}
-                contentContainerStyle={{ paddingTop: insets.top + s(12), paddingBottom: insets.bottom + s(32) }}
+                contentContainerStyle={{ paddingTop: insets.top + s(12), paddingBottom: insets.bottom + s(100) }}
             >
                 {/* ── Header ── */}
                 <View style={styles.header}>
@@ -71,7 +71,8 @@ export default function Settings() {
                 </View>
 
                 {/* ── Account Card ── */}
-                <View style={styles.accountCard}>
+                <View style={[styles.accountCard, { overflow: 'hidden' }]}>
+                    <View style={[styles.accountCardAccent, { backgroundColor: '#0ea5e9' }]} />
                     <View style={styles.avatarCircle}>
                         <UserAvatar size={s(56)} />
                     </View>
@@ -84,9 +85,8 @@ export default function Settings() {
                 {/* ── Account Settings ── */}
                 <Text style={styles.sectionLabel}>ACCOUNT</Text>
                 <View style={styles.section}>
-                    <TouchableOpacity
-                        style={styles.row}
-                        activeOpacity={0.7}
+                    <Pressable
+                        style={({ pressed }) => [styles.row, pressed && { opacity: 0.7 }]}
                         onPress={() => router.push('/pages/EditProfile')}
                     >
                         <View style={styles.rowLeft}>
@@ -96,7 +96,7 @@ export default function Settings() {
                             <Text style={styles.rowLabel}>Edit Profile</Text>
                         </View>
                         <ChevronRight size={s(18)} color="#94a3b8" />
-                    </TouchableOpacity>
+                    </Pressable>
 
                     <View style={styles.divider} />
 
@@ -136,12 +136,15 @@ export default function Settings() {
                 {/* ── Logout ── */}
                 <Text style={styles.sectionLabel}>SESSION</Text>
                 <View style={styles.section}>
-                    <TouchableOpacity style={styles.logoutRow} onPress={handleLogout} activeOpacity={0.7}>
+                    <Pressable
+                        style={({ pressed }) => [styles.logoutRow, pressed && { opacity: 0.7 }]}
+                        onPress={handleLogout}
+                    >
                         <View style={[styles.iconBox, { backgroundColor: '#fee2e2' }]}>
                             <LogOut size={s(18)} color="#ef4444" />
                         </View>
                         <Text style={styles.logoutText}>Log Out</Text>
-                    </TouchableOpacity>
+                    </Pressable>
                 </View>
             </ScrollView>
         </View>
@@ -170,14 +173,22 @@ const lightStyles = StyleSheet.create({
         backgroundColor: '#ffffff',
         borderRadius: s(20),
         padding: s(16),
-        borderWidth: 1,
-        borderColor: '#e2e8f0',
+        paddingTop: s(20),
         gap: s(14),
-        shadowColor: '#000',
+        shadowColor: '#0f172a',
         shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 8,
-        elevation: 2,
+        shadowOpacity: 0.06,
+        shadowRadius: 10,
+        elevation: 3,
+    },
+    accountCardAccent: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        height: s(4),
+        borderTopLeftRadius: s(20),
+        borderTopRightRadius: s(20),
     },
     avatarCircle: {
         width: s(56),
@@ -216,8 +227,6 @@ const lightStyles = StyleSheet.create({
         marginBottom: s(24),
         backgroundColor: '#ffffff',
         borderRadius: s(16),
-        borderWidth: 1,
-        borderColor: '#e2e8f0',
         overflow: 'hidden',
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 2 },
@@ -296,9 +305,17 @@ const darkStyles = StyleSheet.create({
         backgroundColor: '#1e293b',
         borderRadius: s(20),
         padding: s(16),
-        borderWidth: 1,
-        borderColor: '#334155',
+        paddingTop: s(20),
         gap: s(14),
+    },
+    accountCardAccent: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        height: s(4),
+        borderTopLeftRadius: s(20),
+        borderTopRightRadius: s(20),
     },
     avatarCircle: {
         width: s(56),
@@ -337,8 +354,6 @@ const darkStyles = StyleSheet.create({
         marginBottom: s(24),
         backgroundColor: '#1e293b',
         borderRadius: s(16),
-        borderWidth: 1,
-        borderColor: '#334155',
         overflow: 'hidden',
     },
     row: {

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
-    View, Text, ScrollView, TouchableOpacity,
-    StyleSheet, useColorScheme, Dimensions,
+    View, Text, ScrollView, TouchableOpacity, Pressable,
+    StyleSheet, useColorScheme, Dimensions, Animated,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
@@ -18,6 +18,7 @@ import CardWeeklySummary from '../components/CardWeeklySummary';
 import CardMoodInsight from '../components/CardMoodInsight';
 import { getNotifications } from '../services/notifications';
 import { useAppStore } from '../store/appStore';
+import { getCache, setCache } from '../utils/cache';
 
 const { width: SW } = Dimensions.get('window');
 const s = (n: number) => Math.round((SW / 375) * n);
@@ -37,6 +38,14 @@ function conditionLabel(score: number): string {
     return 'Needs Rest';
 }
 
+function scoreAccentColor(score: number | null): string {
+    if (score === null) return '#0ea5e9';
+    if (score >= 80) return '#10b981';
+    if (score >= 60) return '#f59e0b';
+    if (score >= 40) return '#f97316';
+    return '#ef4444';
+}
+
 export default function Dashboard() {
     const [showPulseModal, setShowPulseModal] = useState(false);
     const [pulseSummary, setPulseSummary] = useState<PulseSummary | null>(null);
@@ -51,6 +60,18 @@ export default function Dashboard() {
     const isDark = colorScheme === 'dark';
     const styles = isDark ? darkStyles : lightStyles;
     const insets = useSafeAreaInsets();
+
+    // ── Animated progress bar ──
+    const progressAnim = useRef(new Animated.Value(0)).current;
+
+    // ── Card press scales ──
+    const aiCardScale = useRef(new Animated.Value(1)).current;
+    const journalCardScale = useRef(new Animated.Value(1)).current;
+
+    const pressIn = (anim: Animated.Value) =>
+        Animated.spring(anim, { toValue: 0.97, useNativeDriver: true, tension: 160, friction: 7 }).start();
+    const pressOut = (anim: Animated.Value) =>
+        Animated.spring(anim, { toValue: 1, useNativeDriver: true, tension: 160, friction: 7 }).start();
 
     const { userId, token, profile, setProfile, lastPulseCheckedAt, setLastPulseCheckedAt } = useAppStore(s => ({
         userId: s.userId,
@@ -93,9 +114,13 @@ export default function Dashboard() {
 
     const fetchSummary = useCallback(async () => {
         if (!userId || !token) return;
+        const key = `pulseSummary_${userId}`;
+        const cached = getCache<PulseSummary>(key);
+        if (cached) setPulseSummary(cached);
         try {
             const summary = await getPulseSummary(userId, token);
             setPulseSummary(summary);
+            setCache(key, summary);
         } catch (e) {
             console.error('Failed to fetch pulse summary:', e);
         }
@@ -103,9 +128,13 @@ export default function Dashboard() {
 
     const fetchRecentPulse = useCallback(async () => {
         if (!userId || !token) return;
+        const key = `recentPulse_${userId}`;
+        const cached = getCache<RecentPulseEntry[]>(key);
+        if (cached) setRecentPulse(cached);
         try {
             const entries = await getRecentPulse(userId, token);
             setRecentPulse(entries);
+            setCache(key, entries);
         } catch (e) {
             console.error('Failed to fetch recent pulse:', e);
         }
@@ -214,152 +243,174 @@ export default function Dashboard() {
         ? pulseScore - yesterdayScore
         : null;
     const condition = pulseScore !== null ? conditionLabel(pulseScore) : null;
-    const progressWidth = `${Math.min(((pulseScore ?? 0) / PULSE_GOAL) * 100, 100)}%` as any;
+    const accentColor = scoreAccentColor(pulseScore);
+
+    // Animate progress bar whenever pulseScore changes
+    useEffect(() => {
+        const target = Math.min(((pulseScore ?? 0) / PULSE_GOAL) * 100, 100);
+        Animated.timing(progressAnim, {
+            toValue: target,
+            duration: 900,
+            useNativeDriver: false,
+        }).start();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [pulseScore]);
 
     return (
         <View style={styles.container}>
             <ScrollView
                 style={styles.scrollView}
                 showsVerticalScrollIndicator={false}
-                contentContainerStyle={{ paddingTop: insets.top + s(12) }}
+                contentContainerStyle={{ paddingTop: insets.top + s(12), paddingBottom: insets.bottom + s(100) }}
             >
-                {/* ── Header ── */}
-                <View style={styles.header}>
-                    <View style={styles.headerLeft}>
-                        <TouchableOpacity
-                            style={styles.avatarContainer}
-                            onPress={() => router.push('/(tabs)/profile')}
-                            activeOpacity={0.7}
-                        >
-                            <UserAvatar size={s(40)} />
-                            <View style={styles.statusDot} />
-                        </TouchableOpacity>
-                        <View>
-                            <Text style={styles.dashboardLabel}>DASHBOARD</Text>
-                            <Text style={styles.greeting}>{displayName}</Text>
-                        </View>
-                    </View>
-                    <TouchableOpacity
-                        style={styles.iconButton}
-                        activeOpacity={0.7}
-                        onPress={() => setShowNotifications(true)}
-                    >
-                        <Bell size={s(22)} color={isDark ? '#f8fafc' : '#0f172a'} />
-                        {unreadCount > 0 && (
-                            <View style={styles.badgeDot}>
-                                <Text style={styles.badgeText}>
-                                    {unreadCount > 9 ? '9+' : unreadCount}
-                                </Text>
-                            </View>
-                        )}
-                    </TouchableOpacity>
-                </View>
-
-                {/* ── Daily Pulse Score ── */}
-                <View style={styles.card}>
-                    <View style={styles.cardHeader}>
-                        <Text style={styles.cardTitle}>Daily Pulse Score</Text>
-                        {pulseChange !== null ? (
-                            <View style={[styles.changeBadge, { backgroundColor: pulseChange >= 0 ? '#dcfce7' : '#fee2e2' }]}>
-                                <TrendingUp size={s(14)} color={pulseChange >= 0 ? '#10b981' : '#ef4444'} />
-                                <Text style={[styles.changeBadgeText, { color: pulseChange >= 0 ? '#10b981' : '#ef4444' }]}>
-                                    {pulseChange >= 0 ? '+' : ''}{pulseChange}pts
-                                </Text>
-                            </View>
-                        ) : null}
-                    </View>
-                    <View style={styles.scoreRow}>
-                        <Text style={styles.pulseScore}>
-                            {pulseScore !== null ? pulseScore : '—'}
-                        </Text>
-                        <Text style={styles.vsYesterday}>
-                            {pulseScore !== null ? 'vs. yesterday' : 'No data yet'}
-                        </Text>
-                    </View>
-                    <View style={styles.progressTrack}>
-                        <View style={[styles.progressFill, { width: progressWidth }]} />
-                    </View>
-                    <View style={styles.conditionRow}>
-                        <Text style={styles.conditionText}>
-                            {condition ?? 'Log your first pulse'}
-                        </Text>
-                        <Text style={styles.goalText}>Goal: {PULSE_GOAL}</Text>
-                    </View>
-                </View>
-
-                {/* ── Streak ── */}
-                <CardStreak
-                    streakDays={pulseSummary?.streakDays ?? 0}
-                    isDark={isDark}
-                />
-
-                {/* ── Weekly Summary ── */}
-                <CardWeeklySummary
-                    avgMood={pulseSummary?.avgMood ?? null}
-                    avgSleep={hasStats ? pulseSummary!.avgSleep : null}
-                    daysLogged={pulseSummary?.daysLogged ?? 0}
-                    avgMoodPrev={pulseSummary?.avgMoodPrev ?? null}
-                    avgSleepPrev={pulseSummary?.avgSleepPrev ?? null}
-                    isDark={isDark}
-                />
-
-                {/* ── Mood Trend Insight ── */}
-                <CardMoodInsight
-                    moodBars={moodBars}
-                    avgMood={pulseSummary?.avgMood ?? null}
-                    avgMoodPrev={pulseSummary?.avgMoodPrev ?? null}
-                    moodStability={moodLabel as 'High' | 'Medium' | 'Low' | null}
-                    todayMood={todayEntry?.moodLevel ?? null}
-                    isDark={isDark}
-                />
-
-                {/* ── Weekly Assessment (AI) ── */}
-                <TouchableOpacity
-                    style={styles.aiCard}
-                    activeOpacity={0.75}
-                    onPress={() => router.push('/pages/DailyPulseAi')}
-                >
-                    <View style={styles.aiCardHeader}>
-                        <View style={styles.aiIconBox}>
-                            <Sparkles size={s(18)} color="#0ea5e9" />
-                        </View>
-                        <Text style={styles.aiCardTitle}>Weekly Assessment</Text>
-                        {todayEntry?.aiSuggestion ? (
-                            <TouchableOpacity onPress={() => setViewingPulse(todayEntry)} activeOpacity={0.7}>
-                                <Text style={styles.viewTipText}>View Tip</Text>
+                    {/* ── Header ── */}
+                    <View style={styles.header}>
+                        <View style={styles.headerLeft}>
+                            <TouchableOpacity
+                                style={styles.avatarContainer}
+                                onPress={() => router.push('/(tabs)/profile')}
+                                activeOpacity={0.7}
+                            >
+                                <UserAvatar size={s(40)} />
+                                <View style={styles.statusDot} />
                             </TouchableOpacity>
-                        ) : null}
-                    </View>
-                    <Text style={styles.aiCardBody}>
-                        {todayEntry?.aiSuggestion
-                            ? todayEntry.aiSuggestion.slice(0, 120) + (todayEntry.aiSuggestion.length > 120 ? '…' : '')
-                            : 'Get a personalized weekly wellness report — mood patterns, sleep analysis, and one focused improvement goal.'}
-                    </Text>
-                    <View style={styles.aiCardFooter}>
-                        <Text style={styles.aiCardCta}>View my assessment</Text>
-                        <ChevronRight size={s(14)} color="#0ea5e9" />
-                    </View>
-                </TouchableOpacity>
-
-                {/* ── Journal ── */}
-                <TouchableOpacity
-                    style={styles.journalCard}
-                    activeOpacity={0.75}
-                    onPress={() => router.push('/(tabs)/journal')}
-                >
-                    <View style={styles.journalLeft}>
-                        <View style={styles.journalIconBox}>
-                            <BookOpen size={s(18)} color="#0ea5e9" />
+                            <View>
+                                <Text style={styles.dashboardLabel}>DASHBOARD</Text>
+                                <Text style={styles.greeting}>{displayName}</Text>
+                            </View>
                         </View>
-                        <View style={{ flex: 1 }}>
-                            <Text style={styles.journalTitle}>Daily Journal</Text>
-                            <Text style={styles.journalBody}>Write today's entry and get an AI reflection.</Text>
+                        <TouchableOpacity
+                            style={styles.iconButton}
+                            activeOpacity={0.7}
+                            onPress={() => setShowNotifications(true)}
+                        >
+                            <Bell size={s(22)} color={isDark ? '#f8fafc' : '#0f172a'} />
+                            {unreadCount > 0 && (
+                                <View style={styles.badgeDot}>
+                                    <Text style={styles.badgeText}>
+                                        {unreadCount > 9 ? '9+' : unreadCount}
+                                    </Text>
+                                </View>
+                            )}
+                        </TouchableOpacity>
+                    </View>
+
+                    {/* ── Daily Pulse Score ── */}
+                    <View style={[styles.card, { overflow: 'hidden' }]}>
+                        {/* Colored accent stripe tied to wellness condition */}
+                        <View style={[styles.scoreAccentStripe, { backgroundColor: accentColor }]} />
+                        <View style={styles.cardHeader}>
+                            <Text style={styles.cardTitle}>Daily Pulse Score</Text>
+                            {pulseChange !== null ? (
+                                <View style={[styles.changeBadge, { backgroundColor: pulseChange >= 0 ? '#dcfce7' : '#fee2e2' }]}>
+                                    <TrendingUp size={s(14)} color={pulseChange >= 0 ? '#10b981' : '#ef4444'} />
+                                    <Text style={[styles.changeBadgeText, { color: pulseChange >= 0 ? '#10b981' : '#ef4444' }]}>
+                                        {pulseChange >= 0 ? '+' : ''}{pulseChange}pts
+                                    </Text>
+                                </View>
+                            ) : null}
+                        </View>
+                        <View style={styles.scoreRow}>
+                            <Text style={[styles.pulseScore, { color: accentColor }]}>
+                                {pulseScore !== null ? pulseScore : '—'}
+                            </Text>
+                            <Text style={styles.vsYesterday}>
+                                {pulseScore !== null ? 'vs. yesterday' : 'No data yet'}
+                            </Text>
+                        </View>
+                        <View style={styles.progressTrack}>
+                            <Animated.View style={[styles.progressFill, {
+                                backgroundColor: accentColor,
+                                width: progressAnim.interpolate({
+                                    inputRange: [0, 100],
+                                    outputRange: ['0%', '100%'],
+                                }),
+                            }]} />
+                        </View>
+                        <View style={styles.conditionRow}>
+                            <Text style={styles.conditionText}>
+                                {condition ?? 'Log your first pulse'}
+                            </Text>
+                            <Text style={styles.goalText}>Goal: {PULSE_GOAL}</Text>
                         </View>
                     </View>
-                    <ChevronRight size={s(18)} color="#0ea5e9" />
-                </TouchableOpacity>
 
-                <View style={{ height: insets.bottom + s(100) }} />
+                    {/* ── Streak ── */}
+                    <CardStreak
+                        streakDays={pulseSummary?.streakDays ?? 0}
+                        isDark={isDark}
+                    />
+
+                    {/* ── Weekly Summary ── */}
+                    <CardWeeklySummary
+                        avgMood={pulseSummary?.avgMood ?? null}
+                        avgSleep={hasStats ? pulseSummary!.avgSleep : null}
+                        daysLogged={pulseSummary?.daysLogged ?? 0}
+                        avgMoodPrev={pulseSummary?.avgMoodPrev ?? null}
+                        avgSleepPrev={pulseSummary?.avgSleepPrev ?? null}
+                        isDark={isDark}
+                    />
+
+                    {/* ── Mood Trend Insight ── */}
+                    <CardMoodInsight
+                        moodBars={moodBars}
+                        avgMood={pulseSummary?.avgMood ?? null}
+                        avgMoodPrev={pulseSummary?.avgMoodPrev ?? null}
+                        moodStability={moodLabel as 'High' | 'Medium' | 'Low' | null}
+                        todayMood={todayEntry?.moodLevel ?? null}
+                        isDark={isDark}
+                    />
+
+                    {/* ── Weekly Assessment (AI) ── */}
+                    <Pressable
+                        onPressIn={() => pressIn(aiCardScale)}
+                        onPressOut={() => pressOut(aiCardScale)}
+                        onPress={() => router.push('/pages/DailyPulseAi')}
+                    >
+                        <Animated.View style={[styles.aiCard, { transform: [{ scale: aiCardScale }] }]}>
+                            <View style={styles.aiCardHeader}>
+                                <View style={styles.aiIconBox}>
+                                    <Sparkles size={s(18)} color="#0ea5e9" />
+                                </View>
+                                <Text style={styles.aiCardTitle}>Weekly Assessment</Text>
+                                {todayEntry?.aiSuggestion ? (
+                                    <TouchableOpacity onPress={() => setViewingPulse(todayEntry)} activeOpacity={0.7}>
+                                        <Text style={styles.viewTipText}>View Tip</Text>
+                                    </TouchableOpacity>
+                                ) : null}
+                            </View>
+                            <Text style={styles.aiCardBody}>
+                                {todayEntry?.aiSuggestion
+                                    ? todayEntry.aiSuggestion.slice(0, 120) + (todayEntry.aiSuggestion.length > 120 ? '…' : '')
+                                    : 'Get a personalized weekly wellness report — mood patterns, sleep analysis, and one focused improvement goal.'}
+                            </Text>
+                            <View style={styles.aiCardFooter}>
+                                <Text style={styles.aiCardCta}>View my assessment</Text>
+                                <ChevronRight size={s(14)} color="#0ea5e9" />
+                            </View>
+                        </Animated.View>
+                    </Pressable>
+
+                    {/* ── Journal ── */}
+                    <Pressable
+                        onPressIn={() => pressIn(journalCardScale)}
+                        onPressOut={() => pressOut(journalCardScale)}
+                        onPress={() => router.push('/(tabs)/journal')}
+                    >
+                        <Animated.View style={[styles.journalCard, { transform: [{ scale: journalCardScale }] }]}>
+                            <View style={styles.journalLeft}>
+                                <View style={styles.journalIconBox}>
+                                    <BookOpen size={s(18)} color="#0ea5e9" />
+                                </View>
+                                <View style={{ flex: 1 }}>
+                                    <Text style={styles.journalTitle}>Daily Journal</Text>
+                                    <Text style={styles.journalBody}>Write today's entry and get an AI reflection.</Text>
+                                </View>
+                            </View>
+                            <ChevronRight size={s(18)} color="#0ea5e9" />
+                        </Animated.View>
+                    </Pressable>
+
             </ScrollView>
 
             <DailyPulseCheckModal
@@ -460,19 +511,27 @@ const lightStyles = StyleSheet.create({
         backgroundColor: '#ffffff',
         borderRadius: s(20),
         padding: s(20),
-        borderWidth: 1,
-        borderColor: '#e2e8f0',
-        shadowColor: '#000',
+        shadowColor: '#0f172a',
         shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 8,
-        elevation: 2,
+        shadowOpacity: 0.06,
+        shadowRadius: 10,
+        elevation: 3,
+    },
+    scoreAccentStripe: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        height: s(4),
+        borderTopLeftRadius: s(20),
+        borderTopRightRadius: s(20),
     },
     cardHeader: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
         marginBottom: s(14),
+        marginTop: s(6),
     },
     cardTitle: { fontSize: s(15), fontWeight: '600', color: '#475569' },
     changeBadge: {
@@ -492,8 +551,7 @@ const lightStyles = StyleSheet.create({
     },
     pulseScore: {
         fontSize: s(56),
-        fontWeight: '700',
-        color: '#0f172a',
+        fontWeight: '800',
         lineHeight: s(64),
     },
     vsYesterday: { fontSize: s(13), color: '#94a3b8' },
@@ -506,7 +564,6 @@ const lightStyles = StyleSheet.create({
     },
     progressFill: {
         height: '100%',
-        backgroundColor: '#0ea5e9',
         borderRadius: s(4),
     },
     conditionRow: {
@@ -522,13 +579,11 @@ const lightStyles = StyleSheet.create({
         backgroundColor: '#ffffff',
         borderRadius: s(20),
         padding: s(20),
-        borderWidth: 1,
-        borderColor: '#e2e8f0',
-        shadowColor: '#000',
+        shadowColor: '#0f172a',
         shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 8,
-        elevation: 2,
+        shadowOpacity: 0.06,
+        shadowRadius: 10,
+        elevation: 3,
     },
     aiCardHeader: {
         flexDirection: 'row',
@@ -572,13 +627,11 @@ const lightStyles = StyleSheet.create({
         borderRadius: s(16),
         paddingHorizontal: s(16),
         paddingVertical: s(14),
-        borderWidth: 1,
-        borderColor: '#e2e8f0',
-        shadowColor: '#000',
+        shadowColor: '#0f172a',
         shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 8,
-        elevation: 2,
+        shadowOpacity: 0.06,
+        shadowRadius: 10,
+        elevation: 3,
     },
     journalLeft: {
         flex: 1,
@@ -661,14 +714,23 @@ const darkStyles = StyleSheet.create({
         backgroundColor: '#1e293b',
         borderRadius: s(20),
         padding: s(20),
-        borderWidth: 1,
-        borderColor: '#334155',
+        overflow: 'hidden',
+    },
+    scoreAccentStripe: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        height: s(4),
+        borderTopLeftRadius: s(20),
+        borderTopRightRadius: s(20),
     },
     cardHeader: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
         marginBottom: s(14),
+        marginTop: s(6),
     },
     cardTitle: { fontSize: s(15), fontWeight: '600', color: '#94a3b8' },
     changeBadge: {
@@ -688,8 +750,7 @@ const darkStyles = StyleSheet.create({
     },
     pulseScore: {
         fontSize: s(56),
-        fontWeight: '700',
-        color: '#f8fafc',
+        fontWeight: '800',
         lineHeight: s(64),
     },
     vsYesterday: { fontSize: s(13), color: '#64748b' },
@@ -702,7 +763,6 @@ const darkStyles = StyleSheet.create({
     },
     progressFill: {
         height: '100%',
-        backgroundColor: '#0ea5e9',
         borderRadius: s(4),
     },
     conditionRow: {
@@ -718,8 +778,6 @@ const darkStyles = StyleSheet.create({
         backgroundColor: '#1e293b',
         borderRadius: s(20),
         padding: s(20),
-        borderWidth: 1,
-        borderColor: '#334155',
     },
     aiCardHeader: {
         flexDirection: 'row',
@@ -763,8 +821,6 @@ const darkStyles = StyleSheet.create({
         borderRadius: s(16),
         paddingHorizontal: s(16),
         paddingVertical: s(14),
-        borderWidth: 1,
-        borderColor: '#334155',
     },
     journalLeft: {
         flex: 1,

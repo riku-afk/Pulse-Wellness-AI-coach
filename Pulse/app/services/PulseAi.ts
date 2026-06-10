@@ -1,6 +1,6 @@
 import { Platform } from 'react-native';
 
-const BACKEND_URL = 'https://pulse-wellness-ai-coach-production.up.railway.app';
+const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:5000';
 
 export interface PulseData {
     sleepDuration: number;

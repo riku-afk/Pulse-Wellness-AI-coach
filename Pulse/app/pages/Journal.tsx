@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
-    View, Text, ScrollView, TouchableOpacity,
+    View, Text, ScrollView, TouchableOpacity, Pressable,
     StyleSheet, ActivityIndicator, useColorScheme,
     TextInput, Keyboard,
 } from 'react-native';
@@ -9,6 +9,7 @@ import { useFocusEffect, router } from 'expo-router';
 import { BookOpen, ChevronLeft, ChevronRight, Plus, Search, X } from 'lucide-react-native';
 import { useAppStore } from '../store/appStore';
 import { getJournalEntries, searchJournalEntries, JournalEntry } from '../services/journal';
+import { getCache, setCache } from '../utils/cache';
 
 const { width: SW } = require('react-native').Dimensions.get('window');
 const s = (n: number) => Math.round((SW / 375) * n);
@@ -82,12 +83,23 @@ export default function Journal() {
 
     const fetchPage = useCallback(async (p: number) => {
         if (!userId || !token) return;
-        setLoading(true);
+        const key = `journal_${userId}_p${p}`;
+        const cached = p === 1
+            ? getCache<{ entries: JournalEntry[]; hasMore: boolean; page: number }>(key)
+            : null;
+        if (cached) {
+            setEntries(cached.entries);
+            setHasMore(cached.hasMore);
+            setPage(cached.page);
+        } else {
+            setLoading(true);
+        }
         try {
             const result = await getJournalEntries(userId, token, p);
             setEntries(result.entries);
             setHasMore(result.hasMore);
             setPage(result.page);
+            if (p === 1) setCache(key, result);
         } catch (e) {
             console.error('Failed to fetch journal entries:', e);
         } finally {
@@ -210,7 +222,7 @@ export default function Journal() {
             )}
 
             {/* Content */}
-            {loading && !showSearch ? (
+            {loading && !showSearch && entries.length === 0 ? (
                 <View style={styles.loadingContainer}>
                     <ActivityIndicator size="large" color="#0ea5e9" />
                 </View>
@@ -218,7 +230,7 @@ export default function Journal() {
                 <ScrollView
                     showsVerticalScrollIndicator={false}
                     keyboardShouldPersistTaps="handled"
-                    contentContainerStyle={{ paddingHorizontal: s(20), paddingBottom: insets.bottom + s(32) }}
+                    contentContainerStyle={{ paddingHorizontal: s(20), paddingBottom: insets.bottom + s(100) }}
                 >
                     {/* Search status row */}
                     {isSearchActive && (
@@ -256,10 +268,12 @@ export default function Journal() {
 
                     {/* Entry cards */}
                     {displayedEntries.map((entry, i) => (
-                        <TouchableOpacity
+                        <Pressable
                             key={i}
-                            style={styles.card}
-                            activeOpacity={0.75}
+                            style={({ pressed }) => [
+                                styles.card,
+                                pressed && { opacity: 0.88, transform: [{ scale: 0.98 }] },
+                            ]}
                             onPress={() => openEntry(entry.date)}
                         >
                             <Text style={styles.dateLabel}>{formatDate(entry.date)}</Text>
@@ -293,7 +307,7 @@ export default function Journal() {
                                 <Text style={styles.viewText}>Open entry</Text>
                                 <ChevronRight size={s(13)} color="#0ea5e9" />
                             </View>
-                        </TouchableOpacity>
+                        </Pressable>
                     ))}
 
                     {/* Pagination — hidden during search */}
@@ -373,9 +387,8 @@ const lightStyles = StyleSheet.create({
     card: {
         backgroundColor: '#ffffff', borderRadius: s(20),
         padding: s(18), marginBottom: s(14),
-        borderWidth: 1, borderColor: '#e2e8f0',
-        shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05, shadowRadius: 8, elevation: 2,
+        shadowColor: '#0f172a', shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.06, shadowRadius: 10, elevation: 3,
     },
     dateLabel: { fontSize: s(13), fontWeight: '700', color: '#0ea5e9', marginBottom: s(8) },
     moodRow: { marginBottom: s(8) },
@@ -448,7 +461,7 @@ const darkStyles = StyleSheet.create({
     emptySubText: { fontSize: s(13), color: '#64748b', textAlign: 'center' },
     card: {
         backgroundColor: '#1e293b', borderRadius: s(20),
-        padding: s(18), marginBottom: s(14), borderWidth: 1, borderColor: '#334155',
+        padding: s(18), marginBottom: s(14),
     },
     dateLabel: { fontSize: s(13), fontWeight: '700', color: '#38bdf8', marginBottom: s(8) },
     moodRow: { marginBottom: s(8) },

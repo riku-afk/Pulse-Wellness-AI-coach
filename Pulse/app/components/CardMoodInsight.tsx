@@ -178,20 +178,17 @@ const styles = StyleSheet.create({
         alignItems: 'flex-start',
         gap: s(14),
         borderLeftWidth: s(4),
-        borderWidth: 1,
     },
     cardLight: {
         backgroundColor: '#ffffff',
-        borderColor: '#e2e8f0',
-        shadowColor: '#000',
+        shadowColor: '#0f172a',
         shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 8,
-        elevation: 2,
+        shadowOpacity: 0.06,
+        shadowRadius: 10,
+        elevation: 3,
     },
     cardDark: {
         backgroundColor: '#1e293b',
-        borderColor: '#334155',
     },
     iconBox: {
         width: s(44),
@@ -207,7 +204,7 @@ const styles = StyleSheet.create({
     subtitle: {
         fontSize: s(10),
         fontWeight: '700',
-        letterSpacing: 0.6,
+        letterSpacing: 0.8,
         marginBottom: s(4),
     },
     message: {

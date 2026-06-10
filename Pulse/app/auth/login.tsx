@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Text, View, TextInput, TouchableOpacity, StyleSheet, useColorScheme, Alert, ActivityIndicator } from 'react-native';
+import React, { useState, useRef, useEffect } from 'react';
+import { Text, View, TextInput, TouchableOpacity, StyleSheet, useColorScheme, Alert, ActivityIndicator, Animated, KeyboardAvoidingView, Platform } from 'react-native';
 import { Mail, Lock, Eye, EyeOff, ArrowRight } from 'lucide-react-native';
 import { router } from 'expo-router';
 import { loginUser, checkProfileComplete, getUserPrefs } from '../services/auth';
@@ -10,8 +10,18 @@ export default function Login() {
     const [password, setPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
+    const [focusedField, setFocusedField] = useState<'email' | 'password' | null>(null);
     const colorScheme = useColorScheme();
     const isDark = colorScheme === 'dark';
+
+    const cardAnim = useRef(new Animated.Value(0)).current;
+    useEffect(() => {
+        Animated.spring(cardAnim, { toValue: 1, useNativeDriver: true, tension: 60, friction: 10 }).start();
+    }, []);
+    const cardStyle = useRef({
+        opacity: cardAnim,
+        transform: [{ translateY: cardAnim.interpolate({ inputRange: [0, 1], outputRange: [40, 0] }) }],
+    }).current;
     const { setSession, setLastPulseCheckedAt, setHasSeenLanding, showToast } = useAppStore(s => ({
         setSession: s.setSession,
         setLastPulseCheckedAt: s.setLastPulseCheckedAt,
@@ -60,8 +70,11 @@ export default function Login() {
     const styles = isDark ? darkStyles : lightStyles;
 
     return (
-        <View style={styles.container}>
-            <View style={styles.card}>
+        <KeyboardAvoidingView
+            style={styles.container}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+            <Animated.View style={[styles.card, cardStyle]}>
                 {/* Logo/Icon */}
                 <View style={styles.iconContainer}>
                     <View style={styles.iconBackground}>
@@ -75,8 +88,8 @@ export default function Login() {
 
                 {/* Email Input */}
                 <View style={styles.inputContainer}>
-                    <View style={styles.inputWrapper}>
-                        <Mail size={20} color={isDark ? '#64748b' : '#94a3b8'} style={styles.inputIcon} />
+                    <View style={[styles.inputWrapper, focusedField === 'email' && styles.inputWrapperFocused]}>
+                        <Mail size={20} color={focusedField === 'email' ? '#0ea5e9' : (isDark ? '#64748b' : '#94a3b8')} style={styles.inputIcon} />
                         <TextInput
                             value={email}
                             onChangeText={setEmail}
@@ -85,14 +98,16 @@ export default function Login() {
                             keyboardType="email-address"
                             autoCapitalize="none"
                             style={styles.input}
+                            onFocus={() => setFocusedField('email')}
+                            onBlur={() => setFocusedField(null)}
                         />
                     </View>
                 </View>
 
                 {/* Password Input */}
                 <View style={styles.inputContainer}>
-                    <View style={styles.inputWrapper}>
-                        <Lock size={20} color={isDark ? '#64748b' : '#94a3b8'} style={styles.inputIcon} />
+                    <View style={[styles.inputWrapper, focusedField === 'password' && styles.inputWrapperFocused]}>
+                        <Lock size={20} color={focusedField === 'password' ? '#0ea5e9' : (isDark ? '#64748b' : '#94a3b8')} style={styles.inputIcon} />
                         <TextInput
                             value={password}
                             onChangeText={setPassword}
@@ -100,6 +115,8 @@ export default function Login() {
                             placeholderTextColor={isDark ? '#64748b' : '#94a3b8'}
                             secureTextEntry={!showPassword}
                             style={styles.input}
+                            onFocus={() => setFocusedField('password')}
+                            onBlur={() => setFocusedField(null)}
                         />
                         <TouchableOpacity
                             onPress={() => setShowPassword(!showPassword)}
@@ -172,8 +189,8 @@ export default function Login() {
                         <Text style={styles.signupLink}>Sign up</Text>
                     </TouchableOpacity>
                 </View>
-            </View>
-        </View>
+            </Animated.View>
+        </KeyboardAvoidingView>
     );
 }
 
@@ -237,6 +254,12 @@ const lightStyles = StyleSheet.create({
         borderRadius: 12,
         paddingHorizontal: 16,
         height: 56,
+        borderWidth: 1.5,
+        borderColor: 'transparent',
+    },
+    inputWrapperFocused: {
+        borderColor: '#0ea5e9',
+        backgroundColor: '#f8fafc',
     },
     inputIcon: {
         marginRight: 12,
@@ -391,6 +414,12 @@ const darkStyles = StyleSheet.create({
         borderRadius: 12,
         paddingHorizontal: 16,
         height: 56,
+        borderWidth: 1.5,
+        borderColor: 'transparent',
+    },
+    inputWrapperFocused: {
+        borderColor: '#0ea5e9',
+        backgroundColor: '#1e3a5f',
     },
     inputIcon: {
         marginRight: 12,
