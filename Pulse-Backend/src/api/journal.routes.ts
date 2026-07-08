@@ -92,12 +92,18 @@ router.post('/', async (req: Request, res: Response) => {
             return;
         }
 
-        // Generate AI reflection (best-effort — doesn't block the response)
+        // AI reflection: free-plan clients generate it on-device and send it
+        // along; otherwise generate in the cloud (best-effort, non-blocking).
+        const clientReflection = (req.body as { aiReflection?: unknown }).aiReflection;
         let aiReflection: string | null = null;
-        try {
-            aiReflection = await generateReflection(content.trim(), moodTag ?? null);
-        } catch (e) {
-            console.error('Journal AI reflection failed:', e);
+        if (typeof clientReflection === 'string' && clientReflection.trim()) {
+            aiReflection = clientReflection.trim().slice(0, 300);
+        } else {
+            try {
+                aiReflection = await generateReflection(content.trim(), moodTag ?? null);
+            } catch (e) {
+                console.error('Journal AI reflection failed:', e);
+            }
         }
 
         if (aiReflection) {

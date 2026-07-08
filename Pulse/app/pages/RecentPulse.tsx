@@ -1,8 +1,9 @@
 import React, { useState, useCallback } from 'react';
 import {
     View, Text, ScrollView, TouchableOpacity,
-    StyleSheet, ActivityIndicator, useColorScheme,
+    StyleSheet, useColorScheme,
 } from 'react-native';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
 import { Moon, ChevronLeft, ChevronRight } from 'lucide-react-native';
@@ -10,6 +11,8 @@ import { useAppStore } from '../store/appStore';
 import { getPulseHistory, RecentPulseEntry } from '../services/pulse';
 import PulseAiFloatingModal from '../components/PulseAiFloatingModal';
 import { router } from 'expo-router';
+import AnimatedPressable from '../components/AnimatedPressable';
+import Skeleton from '../components/Skeleton';
 
 const { width: SW } = require('react-native').Dimensions.get('window');
 const s = (n: number) => Math.round((SW / 375) * n);
@@ -91,8 +94,18 @@ export default function RecentPulse() {
             </View>
 
             {loading ? (
-                <View style={styles.loadingContainer}>
-                    <ActivityIndicator size="large" color="#0ea5e9" />
+                <View style={{ paddingHorizontal: s(20), paddingTop: s(4) }}>
+                    {[0, 1, 2].map(i => (
+                        <View key={i} style={styles.card}>
+                            <Skeleton isDark={isDark} width={s(160)} height={s(13)} style={{ marginBottom: s(14) }} />
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: s(10), marginBottom: s(12) }}>
+                                <Skeleton isDark={isDark} width={s(40)} height={s(40)} radius={s(20)} />
+                                <Skeleton isDark={isDark} width={s(90)} height={s(15)} />
+                            </View>
+                            <Skeleton isDark={isDark} height={s(12)} style={{ marginBottom: s(7) }} />
+                            <Skeleton isDark={isDark} width="70%" height={s(12)} />
+                        </View>
+                    ))}
                 </View>
             ) : (
                 <ScrollView
@@ -110,10 +123,12 @@ export default function RecentPulse() {
                             const color = moodColor(entry.moodLevel);
                             const sColor = scoreColor(entry.pulseScore);
                             return (
-                                <TouchableOpacity
-                                    key={i}
+                                <Animated.View
+                                    key={entry.date}
+                                    entering={FadeInDown.duration(350).delay(Math.min(i, 6) * 55)}
+                                >
+                                <AnimatedPressable
                                     style={styles.card}
-                                    activeOpacity={0.75}
                                     onPress={() => setViewingPulse(entry)}
                                 >
                                     {/* Date row */}
@@ -159,7 +174,8 @@ export default function RecentPulse() {
                                         <Text style={styles.viewText}>View full insight</Text>
                                         <ChevronRight size={s(13)} color="#0ea5e9" />
                                     </View>
-                                </TouchableOpacity>
+                                </AnimatedPressable>
+                                </Animated.View>
                             );
                         })
                     )}

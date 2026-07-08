@@ -1,5 +1,5 @@
 import { Stack } from 'expo-router';
-import { View, useColorScheme, Platform } from 'react-native';
+import { View, useColorScheme, Platform, AppState } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useEffect } from 'react';
 import * as Notifications from 'expo-notifications';
@@ -7,6 +7,7 @@ import * as Device from 'expo-device';
 import ToastOverlay from './components/ToastOverlay';
 import { useAppStore } from './store/appStore';
 import { registerFCMToken } from './services/notifications';
+import { flushQueue } from './utils/offlineQueue';
 
 // Show notifications as banners while app is in foreground
 Notifications.setNotificationHandler({
@@ -71,6 +72,14 @@ export default function RootLayout() {
       })
       .catch((err) => console.error('[FCM] registerForPushNotifications failed:', err));
   }, [userId, token]);
+
+  // Sync offline check-ins/journal entries whenever the app returns to foreground.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') flushQueue().catch(() => {});
+    });
+    return () => sub.remove();
+  }, []);
 
   return (
     <SafeAreaProvider>

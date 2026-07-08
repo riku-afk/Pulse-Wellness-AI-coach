@@ -1,4 +1,4 @@
-const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:5000';
+import { apiJson } from './apiClient';
 
 export interface JournalEntry {
     date: string;
@@ -17,20 +17,20 @@ export interface JournalPage {
 export async function saveJournalEntry(
     userId: string,
     token: string,
-    data: { content: string; moodTag: number | null; date?: string }
+    data: {
+        content: string;
+        moodTag: number | null;
+        date?: string;
+        /** Reflection generated on-device (free plan) — backend stores it instead of calling cloud AI. */
+        aiReflection?: string;
+    }
 ): Promise<JournalEntry> {
-    const response = await fetch(`${BACKEND_URL}/api/v1/journal`, {
+    return apiJson<JournalEntry>('/api/v1/journal', {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({ userId, ...data }),
+        body: { userId, ...data },
+        token,
+        errorMessage: 'Failed to save journal entry',
     });
-
-    const json = await response.json();
-    if (!response.ok) throw new Error(json.error || 'Failed to save journal entry');
-    return json as JournalEntry;
 }
 
 export async function getJournalEntries(
@@ -38,14 +38,10 @@ export async function getJournalEntries(
     token: string,
     page: number = 1
 ): Promise<JournalPage> {
-    const response = await fetch(
-        `${BACKEND_URL}/api/v1/journal?userId=${encodeURIComponent(userId)}&page=${page}`,
-        { headers: { 'Authorization': `Bearer ${token}` } }
+    return apiJson<JournalPage>(
+        `/api/v1/journal?userId=${encodeURIComponent(userId)}&page=${page}`,
+        { token, errorMessage: 'Failed to fetch journal entries' },
     );
-
-    const json = await response.json();
-    if (!response.ok) throw new Error(json.error || 'Failed to fetch journal entries');
-    return json as JournalPage;
 }
 
 export async function searchJournalEntries(
@@ -53,13 +49,11 @@ export async function searchJournalEntries(
     token: string,
     q: string
 ): Promise<JournalEntry[]> {
-    const response = await fetch(
-        `${BACKEND_URL}/api/v1/journal/search?userId=${encodeURIComponent(userId)}&q=${encodeURIComponent(q)}`,
-        { headers: { 'Authorization': `Bearer ${token}` } }
+    const data = await apiJson<{ entries: JournalEntry[] }>(
+        `/api/v1/journal/search?userId=${encodeURIComponent(userId)}&q=${encodeURIComponent(q)}`,
+        { token, errorMessage: 'Search failed' },
     );
-    const json = await response.json();
-    if (!response.ok) throw new Error(json.error || 'Search failed');
-    return (json as { entries: JournalEntry[] }).entries;
+    return data.entries;
 }
 
 export async function getJournalEntry(
@@ -67,12 +61,8 @@ export async function getJournalEntry(
     token: string,
     date: string
 ): Promise<JournalEntry | null> {
-    const response = await fetch(
-        `${BACKEND_URL}/api/v1/journal/${date}?userId=${encodeURIComponent(userId)}`,
-        { headers: { 'Authorization': `Bearer ${token}` } }
+    return apiJson<JournalEntry | null>(
+        `/api/v1/journal/${date}?userId=${encodeURIComponent(userId)}`,
+        { token, errorMessage: 'Failed to fetch journal entry' },
     );
-
-    const json = await response.json();
-    if (!response.ok) throw new Error(json.error || 'Failed to fetch journal entry');
-    return json as JournalEntry | null;
 }

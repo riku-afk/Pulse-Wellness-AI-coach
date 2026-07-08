@@ -1,5 +1,6 @@
 import { getAdminDb, getMessaging } from '../../config/firebase-admin';
 import * as admin from 'firebase-admin';
+import { phDateString, phHour } from '../../utils/ph-time';
 
 const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID;
 const FIRESTORE_BASE_URL = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents`;
@@ -28,9 +29,7 @@ export async function storeNotification(
 
     const now = new Date();
     const expiresAt = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000); // +14 days
-
-    const phOffset = 8 * 60 * 60 * 1000;
-    const phDate = new Date(now.getTime() + phOffset).toISOString().split('T')[0]; // PH date YYYY-MM-DD
+    const phDate = phDateString(now.getTime());
 
     await db.collection('users').doc(userId).collection('notifications').add({
         title,
@@ -72,8 +71,7 @@ async function hasNotifiedToday(userId: string, type: NotificationType): Promise
     const db = getAdminDb();
     if (!db) return false;
 
-    const phOffset = 8 * 60 * 60 * 1000;
-    const todayStr = new Date(Date.now() + phOffset).toISOString().split('T')[0];
+    const todayStr = phDateString();
 
     const snap = await db
         .collection('users').doc(userId)
@@ -92,9 +90,7 @@ async function hasPulsedToday(userId: string): Promise<boolean> {
     const db = getAdminDb();
     if (!db) return true; // Assume pulsed — don't spam if SDK unavailable
 
-    const phOffset = 8 * 60 * 60 * 1000;
-    const phNow = new Date(Date.now() + phOffset);
-    const todayStr = phNow.toISOString().split('T')[0]; // YYYY-MM-DD
+    const todayStr = phDateString();
 
     const doc = await db
         .collection('users').doc(userId)
@@ -104,16 +100,30 @@ async function hasPulsedToday(userId: string): Promise<boolean> {
     return doc.exists;
 }
 
-// ─── Core: notify all eligible users ─────────────────────────────────────────
+// ─── Core: notify all users whose reminder hour is due ───────────────────────
 
-export async function checkAndNotifyUsers(type: NotificationType): Promise<void> {
+export const DEFAULT_MORNING_HOUR = 7;   // 7am PH
+export const DEFAULT_EVENING_HOUR = 18;  // 6pm PH
+
+function reminderHour(value: unknown, fallback: number): number {
+    return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 23
+        ? value
+        : fallback;
+}
+
+/**
+ * Sends reminders to every eligible user whose configured reminder hour falls
+ * in `hours` (PH time). Runs hourly from cron with the current hour; the
+ * startup catch-up passes a small window of recent hours to cover restarts.
+ */
+export async function runReminderSweep(hours: number[] = [phHour()]): Promise<void> {
     const db = getAdminDb();
     if (!db) {
         console.warn('[Cron] Admin DB not available, skipping notification run');
         return;
     }
 
-    console.log(`[Cron] Running ${type} notification check`);
+    console.log(`[Cron] Reminder sweep for PH hour(s) ${hours.join(', ')}`);
 
     const usersSnapshot = await db.collection('users')
         .where('notificationsEnabled', '==', true)
@@ -130,6 +140,15 @@ export async function checkAndNotifyUsers(type: NotificationType): Promise<void>
     for (const userDoc of usersSnapshot.docs) {
         const userId = userDoc.id;
         const data = userDoc.data();
+
+        // Per-user reminder hours; morning wins if both land in the window.
+        const morningHour = reminderHour(data.morningReminderHour, DEFAULT_MORNING_HOUR);
+        const eveningHour = reminderHour(data.eveningReminderHour, DEFAULT_EVENING_HOUR);
+        const type: NotificationType | null =
+            hours.includes(morningHour) ? 'morning_reminder'
+            : hours.includes(eveningHour) ? 'evening_reminder'
+            : null;
+        if (!type) continue; // not this user's reminder time
 
         const fcmToken: string | undefined = data.fcmToken;
         if (!fcmToken) { skipped++; continue; }
@@ -163,12 +182,23 @@ export async function checkAndNotifyUsers(type: NotificationType): Promise<void>
             await storeNotification(userId, title, body, type);
             sent++;
         } catch (e) {
-            console.error(`[Cron] Failed to notify user ${userId}:`, e);
+            const code = (e as { code?: string }).code;
+            if (code === 'messaging/registration-token-not-registered'
+                || code === 'messaging/invalid-registration-token') {
+                // Token is dead (app uninstalled / token rotated) — clear it so we
+                // stop burning a failed send on this user every run. The app
+                // re-registers a fresh token on next login.
+                await db.collection('users').doc(userId).update({ fcmToken: null })
+                    .catch(err => console.error(`[Cron] Failed to clear stale FCM token for ${userId}:`, err));
+                console.log(`[Cron] Cleared stale FCM token for user ${userId}`);
+            } else {
+                console.error(`[Cron] Failed to notify user ${userId}:`, e);
+            }
             skipped++;
         }
     }
 
-    console.log(`[Cron] ${type} done — sent: ${sent}, skipped: ${skipped}`);
+    console.log(`[Cron] Reminder sweep done — sent: ${sent}, skipped: ${skipped}`);
 }
 
 // ─── Cleanup notifications older than 14 days ─────────────────────────────────

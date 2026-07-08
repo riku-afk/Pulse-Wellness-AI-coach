@@ -1,9 +1,11 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Text, View, TextInput, TouchableOpacity, StyleSheet, useColorScheme, Alert, ActivityIndicator, Animated, KeyboardAvoidingView, Platform } from 'react-native';
+import React, { useState } from 'react';
+import { Text, View, TextInput, TouchableOpacity, StyleSheet, useColorScheme, Alert, ActivityIndicator, KeyboardAvoidingView, Platform } from 'react-native';
+import Animated, { FadeInUp } from 'react-native-reanimated';
 import { Mail, Lock, Eye, EyeOff, ArrowRight } from 'lucide-react-native';
 import { router } from 'expo-router';
 import { loginUser, checkProfileComplete, getUserPrefs } from '../services/auth';
 import { useAppStore } from '../store/appStore';
+import { triggerHaptic } from '../utils/haptics';
 
 export default function Login() {
     const [email, setEmail] = useState('');
@@ -14,22 +16,17 @@ export default function Login() {
     const colorScheme = useColorScheme();
     const isDark = colorScheme === 'dark';
 
-    const cardAnim = useRef(new Animated.Value(0)).current;
-    useEffect(() => {
-        Animated.spring(cardAnim, { toValue: 1, useNativeDriver: true, tension: 60, friction: 10 }).start();
-    }, []);
-    const cardStyle = useRef({
-        opacity: cardAnim,
-        transform: [{ translateY: cardAnim.interpolate({ inputRange: [0, 1], outputRange: [40, 0] }) }],
-    }).current;
-    const { setSession, setLastPulseCheckedAt, setHasSeenLanding, showToast } = useAppStore(s => ({
+    const { setSession, setLastPulseCheckedAt, setAiPlan, setUseLocalAi, setJournalAiEnabled, showToast } = useAppStore(s => ({
         setSession: s.setSession,
         setLastPulseCheckedAt: s.setLastPulseCheckedAt,
-        setHasSeenLanding: s.setHasSeenLanding,
+        setAiPlan: s.setAiPlan,
+        setUseLocalAi: s.setUseLocalAi,
+        setJournalAiEnabled: s.setJournalAiEnabled,
         showToast: s.showToast,
     }));
 
     const handleLogin = async () => {
+        triggerHaptic('medium');
         setIsLoading(true);
         try {
             const user = await loginUser(email, password);
@@ -41,14 +38,18 @@ export default function Login() {
                 // never shared with a different account on the same device.
                 const prefs = await getUserPrefs(user.userId, user.token);
                 setLastPulseCheckedAt(prefs.lastPulseCheckedAt);
-                setHasSeenLanding(prefs.hasSeenLanding);
+                setAiPlan(prefs.aiPlan);
+                setUseLocalAi(prefs.aiPlan === 'local');
+                setJournalAiEnabled(prefs.journalAiEnabled);
                 showToast('Logged in successfully!');
-                // Skip the landing screen if the user has already seen it
-                router.replace(prefs.hasSeenLanding ? '/(tabs)/home' : '/(tabs)/landing');
+                // The AI engine choice is required before the app is usable —
+                // the daily pulse AI fires on the very first Home visit.
+                router.replace(prefs.aiPlan ? '/(tabs)/home' : '/auth/choose-plan');
             } else {
                 router.replace(`/auth/complete-signup?userId=${encodeURIComponent(user.userId)}&token=${encodeURIComponent(user.token)}`);
             }
         } catch (error: any) {
+            triggerHaptic('error');
             Alert.alert('Login Failed', error.message || 'Something went wrong');
         } finally {
             setIsLoading(false);
@@ -74,7 +75,7 @@ export default function Login() {
             style={styles.container}
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
-            <Animated.View style={[styles.card, cardStyle]}>
+            <Animated.View entering={FadeInUp.springify().damping(18).stiffness(140)} style={styles.card}>
                 {/* Logo/Icon */}
                 <View style={styles.iconContainer}>
                     <View style={styles.iconBackground}>
@@ -141,8 +142,9 @@ export default function Login() {
                 {/* Login Button */}
                 <TouchableOpacity
                     onPress={handleLogin}
-                    style={styles.loginButton}
+                    style={[styles.loginButton, isLoading && { opacity: 0.7 }]}
                     disabled={isLoading}
+                    activeOpacity={0.85}
                 >
                     {isLoading ? (
                         <ActivityIndicator color="#ffffff" />

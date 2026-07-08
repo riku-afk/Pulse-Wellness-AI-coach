@@ -1,12 +1,14 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
     Modal, View, Text, ScrollView, TouchableOpacity,
-    StyleSheet, ActivityIndicator, useColorScheme,
+    StyleSheet, useColorScheme,
 } from 'react-native';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { X, Bell, Sun, Moon } from 'lucide-react-native';
 import { useAppStore } from '../store/appStore';
 import { getNotifications, markAllRead, AppNotification } from '../services/notifications';
+import Skeleton from './Skeleton';
 
 const { width: SW } = require('react-native').Dimensions.get('window');
 const s = (n: number) => Math.round((SW / 375) * n);
@@ -83,8 +85,17 @@ export default function NotificationModal({ visible, onClose, onUnreadCountChang
                 </View>
 
                 {loading ? (
-                    <View style={styles.centered}>
-                        <ActivityIndicator size="large" color="#0ea5e9" />
+                    <View style={{ paddingHorizontal: s(20), paddingTop: s(8) }}>
+                        {[0, 1, 2, 3].map(i => (
+                            <View key={i} style={styles.card}>
+                                <Skeleton isDark={isDark} width={s(36)} height={s(36)} radius={s(10)} />
+                                <View style={{ flex: 1, gap: s(7) }}>
+                                    <Skeleton isDark={isDark} width={s(130)} height={s(13)} />
+                                    <Skeleton isDark={isDark} height={s(12)} />
+                                    <Skeleton isDark={isDark} width={s(90)} height={s(10)} />
+                                </View>
+                            </View>
+                        ))}
                     </View>
                 ) : notifications.length === 0 ? (
                     <View style={styles.centered}>
@@ -97,8 +108,12 @@ export default function NotificationModal({ visible, onClose, onUnreadCountChang
                         showsVerticalScrollIndicator={false}
                         contentContainerStyle={{ paddingHorizontal: s(20), paddingBottom: insets.bottom + s(32) }}
                     >
-                        {notifications.map((notif) => (
-                            <View key={notif.id} style={[styles.card, !notif.isRead && styles.cardUnread]}>
+                        {notifications.map((notif, i) => (
+                            <Animated.View
+                                key={notif.id}
+                                entering={FadeInDown.duration(320).delay(Math.min(i, 8) * 45)}
+                                style={[styles.card, !notif.isRead && styles.cardUnread]}
+                            >
                                 <View style={styles.cardIcon}>
                                     {notif.type === 'morning_reminder'
                                         ? <Sun size={s(18)} color="#f59e0b" />
@@ -111,7 +126,7 @@ export default function NotificationModal({ visible, onClose, onUnreadCountChang
                                     <Text style={styles.cardTime}>{formatTimestamp(notif.createdAt)}</Text>
                                 </View>
                                 {!notif.isRead && <View style={styles.unreadDot} />}
-                            </View>
+                            </Animated.View>
                         ))}
                     </ScrollView>
                 )}

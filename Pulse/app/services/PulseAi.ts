@@ -1,6 +1,38 @@
 import { Platform } from 'react-native';
+import { BACKEND_URL } from './config';
+import { getValidToken, refreshSession } from './apiClient';
+import { useAppStore } from '../store/appStore';
+import { isLocalAiReady, localStreamAIResponse, localStreamWeeklyAssessment, JournalContextEntry } from './localAi/LocalPulseAi';
+import { getJournalEntries } from './journal';
 
-const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:5000';
+/** Free plan with the model downloaded → run inference on-device. */
+function useLocalEngine(): boolean {
+    return useAppStore.getState().useLocalAi && isLocalAiReady();
+}
+
+/**
+ * Journal context for on-device assessments (the cloud path fetches its own
+ * server-side). Only when the user opted in; best-effort — offline or a fetch
+ * failure just means an assessment without journal themes.
+ */
+async function getLocalJournalContext(): Promise<JournalContextEntry[]> {
+    const { journalAiEnabled, userId, token } = useAppStore.getState();
+    if (!journalAiEnabled || !userId || !token) return [];
+    try {
+        const page = await getJournalEntries(userId, token, 1);
+        const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+        return page.entries
+            .filter(e => e.date >= cutoff && e.content.trim().length > 0)
+            .slice(0, 7)
+            .map(e => ({
+                date: e.date,
+                moodTag: e.moodTag,
+                excerpt: e.content.slice(0, 400),
+            }));
+    } catch {
+        return [];
+    }
+}
 
 export interface PulseData {
     sleepDuration: number;
@@ -56,6 +88,7 @@ function processSSEChunk(
 function streamViaXHR(
     url: string,
     body: string,
+    authToken: string | null,
     onChunk: (text: string) => void,
     onDone: (() => void) | undefined,
     signal: AbortSignal | undefined,
@@ -64,6 +97,7 @@ function streamViaXHR(
         const xhr = new XMLHttpRequest();
         xhr.open('POST', url);
         xhr.setRequestHeader('Content-Type', 'application/json');
+        if (authToken) xhr.setRequestHeader('Authorization', `Bearer ${authToken}`);
 
         let cursor = 0;
         const buffer = { value: '' };
@@ -77,6 +111,12 @@ function streamViaXHR(
         };
 
         xhr.onprogress = () => {
+            // HTTP errors (401 etc.) don't fire onerror — surface them explicitly,
+            // otherwise the stream silently completes with no content.
+            if (xhr.status >= 400) {
+                settle(new Error(`Request failed: ${xhr.status}`));
+                return;
+            }
             const newData = xhr.responseText.slice(cursor);
             cursor = xhr.responseText.length;
             const done = processSSEChunk(newData, buffer, onChunk, onDone, (msg) => {
@@ -86,6 +126,10 @@ function streamViaXHR(
         };
 
         xhr.onload = () => {
+            if (xhr.status >= 400) {
+                settle(new Error(`Request failed: ${xhr.status}`));
+                return;
+            }
             // Flush anything left after final onprogress
             if (cursor < xhr.responseText.length) {
                 const newData = xhr.responseText.slice(cursor);
@@ -115,13 +159,17 @@ function streamViaXHR(
 async function streamViaFetch(
     url: string,
     body: string,
+    authToken: string | null,
     onChunk: (text: string) => void,
     onDone: (() => void) | undefined,
     signal: AbortSignal | undefined,
 ): Promise<void> {
     const response = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+            'Content-Type': 'application/json',
+            ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {}),
+        },
         body,
         signal,
     });
@@ -148,7 +196,7 @@ async function streamViaFetch(
     }
 }
 
-function doStream(
+async function doStream(
     url: string,
     body: string,
     onChunk: (text: string) => void,
@@ -157,10 +205,23 @@ function doStream(
 ): Promise<void> {
     // React Native's Fetch doesn't support SSE streaming on native (response.body unreliable).
     // XHR onprogress is the only reliable path on Android/iOS.
-    if (Platform.OS === 'web') {
-        return streamViaFetch(url, body, onChunk, onDone, signal);
+    const run = (tok: string | null) =>
+        Platform.OS === 'web'
+            ? streamViaFetch(url, body, tok, onChunk, onDone, signal)
+            : streamViaXHR(url, body, tok, onChunk, onDone, signal);
+
+    // The AI endpoints require auth; refresh proactively when the token is stale.
+    const authToken = await getValidToken();
+    try {
+        return await run(authToken);
+    } catch (err) {
+        // A 401 happens before any SSE chunk is sent, so a retry can't duplicate output.
+        if (err instanceof Error && err.message.includes('Request failed: 401')) {
+            const fresh = await refreshSession();
+            if (fresh) return run(fresh);
+        }
+        throw err;
     }
-    return streamViaXHR(url, body, onChunk, onDone, signal);
 }
 
 // ---------------------------------------------------------------------------
@@ -182,8 +243,20 @@ export async function streamAIResponse(
     onDone?: () => void,
     signal?: AbortSignal,
 ): Promise<void> {
+    if (useLocalEngine()) {
+        return localStreamAIResponse(userMessage, pulseData, conversationHistory, onChunk, onDone, signal);
+    }
     const body = JSON.stringify({ userMessage, pulseData, conversationHistory });
-    return doStream(`${BACKEND_URL}/api/v1/ai/chat`, body, onChunk, onDone, signal);
+    try {
+        return await doStream(`${BACKEND_URL}/api/v1/ai/chat`, body, onChunk, onDone, signal);
+    } catch (err) {
+        // 402 = cloud AI is premium-only; fall back to the on-device model.
+        // A 402 fires before any SSE chunk, so no output is duplicated.
+        if (err instanceof Error && err.message.includes('Request failed: 402') && isLocalAiReady()) {
+            return localStreamAIResponse(userMessage, pulseData, conversationHistory, onChunk, onDone, signal);
+        }
+        throw err;
+    }
 }
 
 export async function streamWeeklyAssessment(
@@ -194,6 +267,18 @@ export async function streamWeeklyAssessment(
     followUpQuestion?: string,
     previousAssessment?: string,
 ): Promise<void> {
+    if (useLocalEngine()) {
+        const journal = await getLocalJournalContext();
+        return localStreamWeeklyAssessment(weekHistory, onChunk, onDone, signal, followUpQuestion, previousAssessment, journal);
+    }
     const body = JSON.stringify({ weekHistory, followUpQuestion, previousAssessment });
-    return doStream(`${BACKEND_URL}/api/v1/ai/assess`, body, onChunk, onDone, signal);
+    try {
+        return await doStream(`${BACKEND_URL}/api/v1/ai/assess`, body, onChunk, onDone, signal);
+    } catch (err) {
+        if (err instanceof Error && err.message.includes('Request failed: 402') && isLocalAiReady()) {
+            const journal = await getLocalJournalContext();
+            return localStreamWeeklyAssessment(weekHistory, onChunk, onDone, signal, followUpQuestion, previousAssessment, journal);
+        }
+        throw err;
+    }
 }

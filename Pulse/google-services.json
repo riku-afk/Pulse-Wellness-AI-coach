@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "706049743892",
+    "project_id": "pulse-4c11f",
+    "storage_bucket": "pulse-4c11f.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:706049743892:android:19ebc66ba18cd8a56f5b01",
+        "android_client_info": {
+          "package_name": "com.pulse.ai.coach"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB9pDBHVNUZOomZW7jbrl5uLcpY7SQ9HnQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

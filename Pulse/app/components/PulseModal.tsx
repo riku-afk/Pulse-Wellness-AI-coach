@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import { Moon, Smile } from 'lucide-react-native';
 import Slider from '@react-native-community/slider';
+import { triggerHaptic } from '../utils/haptics';
 
 const { width: SW } = Dimensions.get('window');
 const s = (n: number) => Math.round((SW / 375) * n);
@@ -29,6 +30,7 @@ export default function DailyPulseCheckModal({ visible, onClose, onSubmit }: Pro
     const moodScales = useRef([1, 2, 3, 4, 5].map(() => new Animated.Value(1))).current;
 
     const handleMoodSelect = (level: number) => {
+        triggerHaptic('selection');
         const idx = level - 1;
         Animated.sequence([
             Animated.spring(moodScales[idx], { toValue: 1.18, useNativeDriver: true, tension: 200, friction: 5 }),
@@ -38,6 +40,7 @@ export default function DailyPulseCheckModal({ visible, onClose, onSubmit }: Pro
     };
 
     const handleSubmit = async () => {
+        triggerHaptic('medium');
         setIsSubmitting(true);
         await onSubmit({
             sleepDuration,
@@ -46,6 +49,7 @@ export default function DailyPulseCheckModal({ visible, onClose, onSubmit }: Pro
             moodEmoji: moodEmojis[moodLevel - 1],
         });
         setIsSubmitting(false);
+        triggerHaptic('success');
         onClose();
     };
 
@@ -87,6 +91,7 @@ export default function DailyPulseCheckModal({ visible, onClose, onSubmit }: Pro
                             step={0.5}
                             value={sleepDuration}
                             onValueChange={setSleepDuration}
+                            onSlidingComplete={() => triggerHaptic('selection')}
                             minimumTrackTintColor="#0ea5e9"
                             maximumTrackTintColor={isDark ? '#334155' : '#e2e8f0'}
                             thumbTintColor="#0ea5e9"

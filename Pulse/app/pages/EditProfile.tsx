@@ -6,9 +6,11 @@ import {
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 import { Camera, User } from 'lucide-react-native';
 import { updateProfile, uploadAvatar } from '../services/auth';
 import { useAppStore } from '../store/appStore';
+import { triggerHaptic } from '../utils/haptics';
 import BackButton from '../components/BackButton';
 import AvatarPickerSheet from '../components/AvatarPickerSheet';
 import { pickFromCamera, pickFromLibrary } from '../hooks/useAvatarPicker';
@@ -78,6 +80,7 @@ export default function EditProfile() {
             return;
         }
 
+        triggerHaptic('medium');
         setIsLoading(true);
         try {
             const updated = {
@@ -90,9 +93,11 @@ export default function EditProfile() {
             };
             await updateProfile(userId, token, updated);
             setProfile(updated);
+            triggerHaptic('success');
             showToast('Profile updated successfully');
             router.replace('/(tabs)/profile');
         } catch (error: any) {
+            triggerHaptic('error');
             Alert.alert('Error', error.message || 'Failed to update profile');
         } finally {
             setIsLoading(false);
@@ -109,6 +114,7 @@ export default function EditProfile() {
             </View>
 
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
+                <Animated.View entering={FadeInDown.duration(420)}>
                 {/* Avatar */}
                 <TouchableOpacity style={styles.avatarWrapper} onPress={() => setShowPickerSheet(true)} disabled={isUploadingPhoto}>
                     <View style={styles.avatar}>
@@ -197,7 +203,8 @@ export default function EditProfile() {
                         <TouchableOpacity
                             key={option}
                             style={[styles.genderChip, gender === option && styles.genderChipSelected]}
-                            onPress={() => setGender(option)}
+                            onPress={() => { triggerHaptic('selection'); setGender(option); }}
+                            activeOpacity={0.8}
                         >
                             <Text style={[styles.genderChipText, gender === option && styles.genderChipTextSelected]}>
                                 {option}
@@ -207,13 +214,19 @@ export default function EditProfile() {
                 </View>
 
                 {/* Save Button */}
-                <TouchableOpacity style={styles.saveButton} onPress={handleSave} disabled={isLoading}>
+                <TouchableOpacity
+                    style={[styles.saveButton, isLoading && { opacity: 0.7 }]}
+                    onPress={handleSave}
+                    disabled={isLoading}
+                    activeOpacity={0.85}
+                >
                     {isLoading ? (
                         <ActivityIndicator color="#ffffff" />
                     ) : (
                         <Text style={styles.saveButtonText}>Save Changes</Text>
                     )}
                 </TouchableOpacity>
+                </Animated.View>
             </ScrollView>
         </View>
     );

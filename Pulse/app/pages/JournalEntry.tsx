@@ -1,14 +1,18 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
     View, Text, TextInput, Pressable, ScrollView,
-    StyleSheet, ActivityIndicator, useColorScheme, KeyboardAvoidingView, Platform, Animated,
+    StyleSheet, ActivityIndicator, useColorScheme, KeyboardAvoidingView, Platform,
 } from 'react-native';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, router, useLocalSearchParams } from 'expo-router';
 import { ChevronLeft, Sparkles } from 'lucide-react-native';
 import { useAppStore } from '../store/appStore';
 import { saveJournalEntry, getJournalEntry } from '../services/journal';
 import { clearCacheByPrefix } from '../utils/cache';
+import { enqueueWrite, isNetworkError } from '../utils/offlineQueue';
+import { isLocalAiReady, localGenerateReflection } from '../services/localAi/LocalPulseAi';
+import { triggerHaptic } from '../utils/haptics';
 
 const { width: SW } = require('react-native').Dimensions.get('window');
 const s = (n: number) => Math.round((SW / 375) * n);
@@ -42,7 +46,7 @@ export default function JournalEntry() {
     const styles = isDark ? darkStyles : lightStyles;
     const insets = useSafeAreaInsets();
 
-    const { userId, token } = useAppStore(s => ({ userId: s.userId, token: s.token }));
+    const { userId, token, showToast } = useAppStore(s => ({ userId: s.userId, token: s.token, showToast: s.showToast }));
     const params = useLocalSearchParams<{ date?: string }>();
     const date = params.date ?? todayDateString();
 
@@ -53,15 +57,6 @@ export default function JournalEntry() {
     const [isLoading, setIsLoading] = useState(true);
     const [saveSuccess, setSaveSuccess] = useState(false);
     const [inputFocused, setInputFocused] = useState(false);
-
-    const pageAnim = useRef(new Animated.Value(0)).current;
-    useEffect(() => {
-        Animated.timing(pageAnim, { toValue: 1, duration: 440, delay: 60, useNativeDriver: true }).start();
-    }, []);
-    const enterStyle = useRef({
-        opacity: pageAnim,
-        transform: [{ translateY: pageAnim.interpolate({ inputRange: [0, 1], outputRange: [s(16), 0] }) }],
-    }).current;
 
     useFocusEffect(useCallback(() => {
         let cancelled = false;
@@ -94,17 +89,55 @@ export default function JournalEntry() {
         setIsSaving(true);
         setSaveSuccess(false);
         setAiReflection(null);
+
+        // Free plan with the on-device engine: generate the reflection locally
+        // and send it with the save, so the backend skips its cloud AI call.
+        let localReflection: string | undefined;
+        if (useAppStore.getState().useLocalAi && isLocalAiReady()) {
+            try {
+                localReflection = await localGenerateReflection(content.trim(), moodTag);
+            } catch {
+                // Model failed to load/generate — the backend will fall back to cloud.
+            }
+        }
+
         try {
             const result = await saveJournalEntry(userId, token, {
                 content: content.trim(),
                 moodTag,
                 date,
+                ...(localReflection ? { aiReflection: localReflection } : {}),
             });
             setAiReflection(result.aiReflection);
             setSaveSuccess(true);
+            triggerHaptic('success');
             clearCacheByPrefix(`journal_${userId}`);
         } catch (e) {
-            console.error('Failed to save journal entry:', e);
+            if (isNetworkError(e)) {
+                // Offline — keep the entry and sync it when connectivity returns.
+                // The journal cache is NOT cleared here: it's what the list screen
+                // shows while offline.
+                await enqueueWrite({
+                    kind: 'journal',
+                    userId,
+                    date,
+                    payload: {
+                        content: content.trim(),
+                        moodTag,
+                        date,
+                        ...(localReflection ? { aiReflection: localReflection } : {}),
+                    },
+                });
+                // With the local engine the reflection still works offline.
+                if (localReflection) setAiReflection(localReflection);
+                setSaveSuccess(true);
+                triggerHaptic('success');
+                showToast("You're offline — entry saved and will sync automatically");
+            } else {
+                console.error('Failed to save journal entry:', e);
+                triggerHaptic('error');
+                showToast("Couldn't save your entry. Please try again.");
+            }
         } finally {
             setIsSaving(false);
         }
@@ -118,7 +151,7 @@ export default function JournalEntry() {
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
             <View style={styles.container}>
-            <Animated.View style={[{ flex: 1 }, enterStyle]}>
+            <Animated.View entering={FadeInDown.duration(420).delay(40)} style={{ flex: 1 }}>
                 {/* Header */}
                 <View style={[styles.header, { paddingTop: insets.top + s(12) }]}>
                     <Pressable
@@ -173,7 +206,7 @@ export default function JournalEntry() {
                                             !selected && { borderColor: isDark ? '#334155' : '#e2e8f0' },
                                             pressed && { opacity: 0.72, transform: [{ scale: 0.91 }] },
                                         ]}
-                                        onPress={() => setMoodTag(selected ? null : tag)}
+                                        onPress={() => { triggerHaptic('selection'); setMoodTag(selected ? null : tag); }}
                                     >
                                         <Text style={[
                                             styles.moodBtnText,
@@ -219,13 +252,13 @@ export default function JournalEntry() {
                         )}
 
                         {aiReflection && !isSaving && (
-                            <View style={styles.reflectionCard}>
+                            <Animated.View entering={FadeInDown.springify().damping(16).stiffness(180)} style={styles.reflectionCard}>
                                 <View style={styles.reflectionHeader}>
                                     <Sparkles size={s(15)} color={isDark ? '#38bdf8' : '#0ea5e9'} />
                                     <Text style={styles.reflectionTitle}>AI Reflection</Text>
                                 </View>
                                 <Text style={styles.reflectionText}>{aiReflection}</Text>
-                            </View>
+                            </Animated.View>
                         )}
                     </ScrollView>
                 )}

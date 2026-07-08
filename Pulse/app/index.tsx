@@ -3,14 +3,18 @@ import { View, ActivityIndicator, useColorScheme } from 'react-native';
 import { router } from 'expo-router';
 import { useAppStore } from './store/appStore';
 import { refreshIdToken, checkProfileComplete, getUserPrefs } from './services/auth';
+import { hydrateCache } from './utils/cache';
+import { flushQueue, isNetworkError } from './utils/offlineQueue';
 
 export default function Index() {
   const isDark = useColorScheme() === 'dark';
 
-  const { setToken, setLastPulseCheckedAt, setHasSeenLanding, clearSession } = useAppStore(s => ({
+  const { setToken, setLastPulseCheckedAt, setAiPlan, setUseLocalAi, setJournalAiEnabled, clearSession } = useAppStore(s => ({
     setToken: s.setToken,
     setLastPulseCheckedAt: s.setLastPulseCheckedAt,
-    setHasSeenLanding: s.setHasSeenLanding,
+    setAiPlan: s.setAiPlan,
+    setUseLocalAi: s.setUseLocalAi,
+    setJournalAiEnabled: s.setJournalAiEnabled,
     clearSession: s.clearSession,
   }));
 
@@ -18,6 +22,9 @@ export default function Index() {
     // Zustand's persist middleware rehydrates on the first render tick.
     // Wait one tick so the store values reflect AsyncStorage before we act.
     const timer = setTimeout(async () => {
+      // Load last-known data (summaries, lists) so screens can render offline.
+      await hydrateCache();
+
       const storeState = useAppStore.getState();
       const storedUserId = storeState.userId;
       const storedToken = storeState.token;
@@ -38,24 +45,33 @@ export default function Index() {
 
       // Silently refresh the idToken before navigating
       let freshToken = storedToken;
-      let freshRefresh = storedRefresh;
       try {
         const result = await refreshIdToken(storedRefresh);
         freshToken = result.token;
-        freshRefresh = result.refreshToken;
-        setToken(freshToken, freshRefresh);
-      } catch {
+        setToken(result.token, result.refreshToken);
+      } catch (e) {
+        if (isNetworkError(e)) {
+          // Offline — keep the session and let apiClient refresh once
+          // connectivity returns. Cached data still renders.
+          router.replace('/(tabs)/home');
+          return;
+        }
         // Refresh token expired/revoked — force re-login
         clearSession();
         router.replace('/auth/login');
         return;
       }
 
-      // Restore user prefs (hasSeenLanding, lastPulseCheckedAt)
+      // Sync any check-ins/journal entries written while offline (fire-and-forget).
+      flushQueue().catch(() => {});
+
+      // Restore user prefs (lastPulseCheckedAt, aiPlan, journal AI opt-in)
       try {
         const prefs = await getUserPrefs(storedUserId, freshToken);
         setLastPulseCheckedAt(prefs.lastPulseCheckedAt);
-        setHasSeenLanding(prefs.hasSeenLanding);
+        setAiPlan(prefs.aiPlan);
+        setUseLocalAi(prefs.aiPlan === 'local');
+        setJournalAiEnabled(prefs.journalAiEnabled);
 
         const profileDone = await checkProfileComplete(storedUserId, freshToken);
         if (!profileDone) {
@@ -63,7 +79,8 @@ export default function Index() {
           return;
         }
 
-        router.replace(prefs.hasSeenLanding ? '/(tabs)/home' : '/(tabs)/landing');
+        // AI engine choice is required before the app is usable.
+        router.replace(prefs.aiPlan ? '/(tabs)/home' : '/auth/choose-plan');
       } catch {
         // Prefs fetch failed but token is valid — go to dashboard
         router.replace('/(tabs)/home');

@@ -1,8 +1,8 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
-    View, Text, ScrollView, TouchableOpacity, Pressable,
+    View, Text, ScrollView, TouchableOpacity,
     StyleSheet, ActivityIndicator, useColorScheme,
-    TextInput, Keyboard,
+    TextInput, Keyboard, RefreshControl,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, router } from 'expo-router';
@@ -10,6 +10,9 @@ import { BookOpen, ChevronLeft, ChevronRight, Plus, Search, X } from 'lucide-rea
 import { useAppStore } from '../store/appStore';
 import { getJournalEntries, searchJournalEntries, JournalEntry } from '../services/journal';
 import { getCache, setCache } from '../utils/cache';
+import AnimatedPressable from '../components/AnimatedPressable';
+import Skeleton from '../components/Skeleton';
+import { triggerHaptic } from '../utils/haptics';
 
 const { width: SW } = require('react-native').Dimensions.get('window');
 const s = (n: number) => Math.round((SW / 375) * n);
@@ -72,6 +75,7 @@ export default function Journal() {
 
     // Search
     const [showSearch, setShowSearch] = useState(false);
+    const [refreshing, setRefreshing] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState<JournalEntry[]>([]);
     const [searchLoading, setSearchLoading] = useState(false);
@@ -110,6 +114,12 @@ export default function Journal() {
     useFocusEffect(useCallback(() => {
         fetchPage(1);
     }, [fetchPage]));
+
+    const onRefresh = useCallback(async () => {
+        setRefreshing(true);
+        await fetchPage(1);
+        setRefreshing(false);
+    }, [fetchPage]);
 
     // Debounced search — fires 350ms after the user stops typing
     useEffect(() => {
@@ -189,7 +199,7 @@ export default function Journal() {
                     </TouchableOpacity>
                     {!showSearch && (
                         <TouchableOpacity
-                            onPress={() => openEntry(todayDateString())}
+                            onPress={() => { triggerHaptic('light'); openEntry(todayDateString()); }}
                             style={styles.addBtn}
                             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                         >
@@ -223,14 +233,29 @@ export default function Journal() {
 
             {/* Content */}
             {loading && !showSearch && entries.length === 0 ? (
-                <View style={styles.loadingContainer}>
-                    <ActivityIndicator size="large" color="#0ea5e9" />
+                <View style={{ paddingHorizontal: s(20), paddingTop: s(4) }}>
+                    {[0, 1, 2].map(i => (
+                        <View key={i} style={styles.card}>
+                            <Skeleton isDark={isDark} width={s(150)} height={s(13)} style={{ marginBottom: s(12) }} />
+                            <Skeleton isDark={isDark} height={s(12)} style={{ marginBottom: s(7) }} />
+                            <Skeleton isDark={isDark} width="92%" height={s(12)} style={{ marginBottom: s(7) }} />
+                            <Skeleton isDark={isDark} width="64%" height={s(12)} />
+                        </View>
+                    ))}
                 </View>
             ) : (
                 <ScrollView
                     showsVerticalScrollIndicator={false}
                     keyboardShouldPersistTaps="handled"
                     contentContainerStyle={{ paddingHorizontal: s(20), paddingBottom: insets.bottom + s(100) }}
+                    refreshControl={!showSearch ? (
+                        <RefreshControl
+                            refreshing={refreshing}
+                            onRefresh={onRefresh}
+                            tintColor="#0ea5e9"
+                            colors={['#0ea5e9']}
+                        />
+                    ) : undefined}
                 >
                     {/* Search status row */}
                     {isSearchActive && (
@@ -266,14 +291,12 @@ export default function Journal() {
                         </View>
                     )}
 
-                    {/* Entry cards */}
-                    {displayedEntries.map((entry, i) => (
-                        <Pressable
-                            key={i}
-                            style={({ pressed }) => [
-                                styles.card,
-                                pressed && { opacity: 0.88, transform: [{ scale: 0.98 }] },
-                            ]}
+                    {/* Entry cards — no per-card entrance animation: staggered
+                        mounts stutter on low-end devices with long lists */}
+                    {displayedEntries.map((entry) => (
+                        <AnimatedPressable
+                            key={entry.date}
+                            style={styles.card}
                             onPress={() => openEntry(entry.date)}
                         >
                             <Text style={styles.dateLabel}>{formatDate(entry.date)}</Text>
@@ -307,7 +330,7 @@ export default function Journal() {
                                 <Text style={styles.viewText}>Open entry</Text>
                                 <ChevronRight size={s(13)} color="#0ea5e9" />
                             </View>
-                        </Pressable>
+                        </AnimatedPressable>
                     ))}
 
                     {/* Pagination — hidden during search */}

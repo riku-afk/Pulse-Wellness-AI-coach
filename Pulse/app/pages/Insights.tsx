@@ -1,11 +1,13 @@
 import React, { useState, useCallback } from 'react';
 import {
     View, Text, ScrollView, TouchableOpacity,
-    StyleSheet, useColorScheme, Dimensions,
+    StyleSheet, useColorScheme, Dimensions, RefreshControl,
 } from 'react-native';
+import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, router } from 'expo-router';
 import { Moon, Activity, ChevronRight } from 'lucide-react-native';
+import AnimatedPressable from '../components/AnimatedPressable';
 import { getPulseSummary, getRecentPulse, PulseSummary, RecentPulseEntry } from '../services/pulse';
 import PulseAiFloatingModal from '../components/PulseAiFloatingModal';
 import { useAppStore } from '../store/appStore';
@@ -37,21 +39,36 @@ export default function Insights() {
     const [recentPulse, setRecentPulse] = useState<RecentPulseEntry[]>([]);
     const [viewingPulse, setViewingPulse] = useState<RecentPulseEntry | null>(null);
 
-    useFocusEffect(useCallback(() => {
+    const [refreshing, setRefreshing] = useState(false);
+
+    const fetchData = useCallback(async () => {
         if (!userId || !token) return;
         const summaryKey = `pulseSummary_${userId}`;
         const recentKey = `recentPulse_${userId}`;
-        const cachedSummary = getCache<PulseSummary>(summaryKey);
-        const cachedRecent = getCache<RecentPulseEntry[]>(recentKey);
+        await Promise.all([
+            getPulseSummary(userId, token)
+                .then(data => { setPulseSummary(data); setCache(summaryKey, data); })
+                .catch(e => console.error('Insights: summary fetch failed', e)),
+            getRecentPulse(userId, token)
+                .then(data => { setRecentPulse(data); setCache(recentKey, data); })
+                .catch(e => console.error('Insights: recent pulse fetch failed', e)),
+        ]);
+    }, [userId, token]);
+
+    useFocusEffect(useCallback(() => {
+        if (!userId || !token) return;
+        const cachedSummary = getCache<PulseSummary>(`pulseSummary_${userId}`);
+        const cachedRecent = getCache<RecentPulseEntry[]>(`recentPulse_${userId}`);
         if (cachedSummary) setPulseSummary(cachedSummary);
         if (cachedRecent) setRecentPulse(cachedRecent);
-        getPulseSummary(userId, token)
-            .then(data => { setPulseSummary(data); setCache(summaryKey, data); })
-            .catch(e => console.error('Insights: summary fetch failed', e));
-        getRecentPulse(userId, token)
-            .then(data => { setRecentPulse(data); setCache(recentKey, data); })
-            .catch(e => console.error('Insights: recent pulse fetch failed', e));
-    }, [userId, token]));
+        fetchData();
+    }, [userId, token, fetchData]));
+
+    const onRefresh = useCallback(async () => {
+        setRefreshing(true);
+        await fetchData();
+        setRefreshing(false);
+    }, [fetchData]);
 
     const hasStats = pulseSummary?.hasData ?? false;
     const moodBars = hasStats ? pulseSummary!.moodBars : [];
@@ -70,15 +87,24 @@ export default function Insights() {
             <ScrollView
                 showsVerticalScrollIndicator={false}
                 contentContainerStyle={{ paddingTop: insets.top + s(12), paddingBottom: insets.bottom + s(100) }}
+                refreshControl={
+                    <RefreshControl
+                        refreshing={refreshing}
+                        onRefresh={onRefresh}
+                        tintColor="#0ea5e9"
+                        colors={['#0ea5e9']}
+                        progressViewOffset={insets.top}
+                    />
+                }
             >
                 {/* ── Header ── */}
-                <View style={styles.header}>
+                <Animated.View entering={FadeInDown.duration(400)} style={styles.header}>
                     <Text style={styles.pageTitle}>Insights</Text>
                     <Text style={styles.pageSub}>Your wellness data at a glance</Text>
-                </View>
+                </Animated.View>
 
                 {/* ── Stats Row ── */}
-                <View style={styles.statsRow}>
+                <Animated.View entering={FadeInDown.duration(400).delay(80)} style={styles.statsRow}>
 
                     {/* Avg Sleep */}
                     <View style={styles.statCard}>
@@ -89,7 +115,11 @@ export default function Insights() {
                         <Text style={styles.statValue}>{avgSleep !== null ? `${avgSleep}h` : '—'}</Text>
                         <View style={[styles.miniLineChart, { height: CHART_SLEEP_H }]}>
                             {normalizedSleepBars.map((h, i) => (
-                                <View key={i} style={[styles.lineBar, { height: h }]} />
+                                <Animated.View
+                                    key={i}
+                                    entering={FadeInUp.duration(350).delay(150 + i * 40)}
+                                    style={[styles.lineBar, { height: h }]}
+                                />
                             ))}
                         </View>
                     </View>
@@ -119,7 +149,11 @@ export default function Insights() {
                                 const pct = moodBars[i] / Math.max(...moodBars);
                                 const barColor = pct > 0.7 ? '#10b981' : pct > 0.4 ? '#f59e0b' : '#ef4444';
                                 return (
-                                    <View key={i} style={[styles.bar, { height: h, backgroundColor: barColor }]} />
+                                    <Animated.View
+                                        key={i}
+                                        entering={FadeInUp.duration(350).delay(150 + i * 40)}
+                                        style={[styles.bar, { height: h, backgroundColor: barColor }]}
+                                    />
                                 );
                             }) : null}
                         </View>
@@ -129,10 +163,10 @@ export default function Insights() {
                             ))}
                         </View>
                     </View>
-                </View>
+                </Animated.View>
 
                 {/* ── Sleep Debt ── */}
-                <View style={styles.card}>
+                <Animated.View entering={FadeInDown.duration(400).delay(160)} style={styles.card}>
                     <View style={styles.sleepDebtHeader}>
                         <View>
                             <Text style={styles.sleepDebtTitle}>Sleep Debt</Text>
@@ -194,11 +228,11 @@ export default function Insights() {
                             <Text style={styles.legendText}>Deficit</Text>
                         </View>
                     </View>
-                </View>
+                </Animated.View>
 
                 {/* ── Recent Pulse ── */}
                 {recentPulse.length > 0 && (
-                    <View style={styles.recentSection}>
+                    <Animated.View entering={FadeInDown.duration(400).delay(240)} style={styles.recentSection}>
                         <View style={styles.recentSectionHeader}>
                             <Text style={styles.recentTitle}>Recent Pulse</Text>
                             {recentPulse.length >= 5 && (
@@ -217,10 +251,10 @@ export default function Insights() {
                                     weekday: 'short', month: 'short', day: 'numeric',
                                 });
                                 return (
-                                    <TouchableOpacity
+                                    <AnimatedPressable
                                         key={i}
                                         style={styles.recentCard}
-                                        activeOpacity={0.75}
+                                        scaleTo={0.95}
                                         onPress={() => setViewingPulse(entry)}
                                     >
                                         <Text style={styles.recentDate}>{dateLabel}</Text>
@@ -248,11 +282,11 @@ export default function Insights() {
                                             <Text style={styles.recentViewText}>View insight</Text>
                                             <ChevronRight size={s(12)} color="#0ea5e9" />
                                         </View>
-                                    </TouchableOpacity>
+                                    </AnimatedPressable>
                                 );
                             })}
                         </ScrollView>
-                    </View>
+                    </Animated.View>
                 )}
             </ScrollView>
 

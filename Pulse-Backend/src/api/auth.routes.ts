@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { getAdminDb } from '../config/firebase-admin';
+import { requireAuth, AuthedRequest } from '../middleware/auth.middleware';
 
 const router = Router();
 
@@ -79,17 +80,17 @@ router.post('/login', async (req: Request, res: Response) => {
     }
 });
 
-router.post('/logout', async (req: Request, res: Response) => {
-    const { userId } = req.body as { userId?: string };
+router.post('/logout', requireAuth, async (req: AuthedRequest, res: Response) => {
+    // The write goes through the Admin SDK, so the userId must come from the
+    // verified ID token — not the body — or anyone could clear a user's FCM token.
+    const userId = req.uid!;
 
-    if (userId) {
-        const db = getAdminDb();
-        if (db) {
-            // Clear only the FCM token so this device no longer receives pushes for this user.
-            // notificationsEnabled is left untouched — it reflects the user's preference, not the device state.
-            await db.collection('users').doc(userId).update({ fcmToken: null })
-                .catch(e => console.error(`[Auth] Failed to clear FCM token for ${userId}:`, e));
-        }
+    const db = getAdminDb();
+    if (db) {
+        // Clear only the FCM token so this device no longer receives pushes for this user.
+        // notificationsEnabled is left untouched — it reflects the user's preference, not the device state.
+        await db.collection('users').doc(userId).update({ fcmToken: null })
+            .catch(e => console.error(`[Auth] Failed to clear FCM token for ${userId}:`, e));
     }
 
     res.json({ message: 'Logged out successfully' });
@@ -247,12 +248,15 @@ router.post('/profile/:userId/avatar', async (req: Request, res: Response) => {
     }
 });
 
-// Partial-update endpoint for per-user behavioural flags (lastPulseCheckedAt, hasSeenLanding).
+// Partial-update endpoint for per-user behavioural flags (lastPulseCheckedAt, AI settings, reminder hours).
 // Uses Firestore updateMask so it never overwrites unrelated profile fields.
 router.patch('/profile/:userId/prefs', async (req: Request, res: Response) => {
     const { userId } = req.params;
-    const { lastPulseCheckedAt, hasSeenLanding } = req.body;
+    const { lastPulseCheckedAt, journalAiEnabled, morningReminderHour, eveningReminderHour, aiPlan } = req.body;
     const token = req.headers.authorization?.split('Bearer ')[1];
+
+    const isValidHour = (v: unknown): v is number =>
+        typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 23;
 
     const fields: Record<string, unknown> = {};
     const maskPaths: string[] = [];
@@ -261,9 +265,33 @@ router.patch('/profile/:userId/prefs', async (req: Request, res: Response) => {
         fields.lastPulseCheckedAt = { integerValue: String(lastPulseCheckedAt) };
         maskPaths.push('lastPulseCheckedAt');
     }
-    if (hasSeenLanding !== undefined) {
-        fields.hasSeenLanding = { booleanValue: hasSeenLanding };
-        maskPaths.push('hasSeenLanding');
+    if (journalAiEnabled !== undefined) {
+        fields.journalAiEnabled = { booleanValue: Boolean(journalAiEnabled) };
+        maskPaths.push('journalAiEnabled');
+    }
+    if (morningReminderHour !== undefined) {
+        if (!isValidHour(morningReminderHour)) {
+            res.status(400).json({ error: 'morningReminderHour must be an integer 0-23' });
+            return;
+        }
+        fields.morningReminderHour = { integerValue: String(morningReminderHour) };
+        maskPaths.push('morningReminderHour');
+    }
+    if (eveningReminderHour !== undefined) {
+        if (!isValidHour(eveningReminderHour)) {
+            res.status(400).json({ error: 'eveningReminderHour must be an integer 0-23' });
+            return;
+        }
+        fields.eveningReminderHour = { integerValue: String(eveningReminderHour) };
+        maskPaths.push('eveningReminderHour');
+    }
+    if (aiPlan !== undefined) {
+        if (aiPlan !== 'local' && aiPlan !== 'cloud') {
+            res.status(400).json({ error: "aiPlan must be 'local' or 'cloud'" });
+            return;
+        }
+        fields.aiPlan = { stringValue: aiPlan };
+        maskPaths.push('aiPlan');
     }
     if (maskPaths.length === 0) {
         res.status(400).json({ error: 'No fields to update' });

@@ -71,7 +71,7 @@ function computeStreakDays(datesDescending: string[]): number {
 }
 
 router.post('/log', async (req: Request, res: Response) => {
-    const { userId, moodLevel, moodLabel, sleepDuration, pulseScore } = req.body;
+    const { userId, moodLevel, moodLabel, sleepDuration, pulseScore, date: clientDate } = req.body;
     const token = req.headers.authorization?.split('Bearer ')[1];
 
     if (!userId || moodLevel === undefined || sleepDuration === undefined) {
@@ -79,7 +79,16 @@ router.post('/log', async (req: Request, res: Response) => {
         return;
     }
 
-    const date = todayDateString();
+    // Accept a client-supplied date (offline check-ins synced later), bounded to
+    // the last 7 days. The -1 day allowance covers clients ahead of UTC (PH is +8).
+    const DAY = 24 * 60 * 60 * 1000;
+    let date = todayDateString();
+    if (typeof clientDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(clientDate)) {
+        const diff = Date.parse(date) - Date.parse(clientDate);
+        if (!Number.isNaN(diff) && diff >= -DAY && diff <= 7 * DAY) {
+            date = clientDate;
+        }
+    }
     const sleepDebt = sleepDuration < SLEEP_TARGET_HOURS
         ? Math.round((SLEEP_TARGET_HOURS - sleepDuration) * 60)
         : 0;

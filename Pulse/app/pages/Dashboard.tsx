@@ -1,8 +1,12 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
-    View, Text, ScrollView, TouchableOpacity, Pressable,
-    StyleSheet, useColorScheme, Dimensions, Animated,
+    View, Text, ScrollView, TouchableOpacity,
+    StyleSheet, useColorScheme, Dimensions, RefreshControl,
 } from 'react-native';
+import Animated, {
+    FadeInDown, useSharedValue, useAnimatedStyle, withTiming, Easing,
+} from 'react-native-reanimated';
+import AnimatedPressable from '../components/AnimatedPressable';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
 import { Bell, TrendingUp, Sparkles, ChevronRight, BookOpen } from 'lucide-react-native';
@@ -19,6 +23,8 @@ import CardMoodInsight from '../components/CardMoodInsight';
 import { getNotifications } from '../services/notifications';
 import { useAppStore } from '../store/appStore';
 import { getCache, setCache } from '../utils/cache';
+import { enqueueWrite, isNetworkError } from '../utils/offlineQueue';
+import { phDateString } from '../utils/date';
 
 const { width: SW } = Dimensions.get('window');
 const s = (n: number) => Math.round((SW / 375) * n);
@@ -46,6 +52,30 @@ function scoreAccentColor(score: number | null): string {
     return '#ef4444';
 }
 
+/** Eases a number from its previous value to `target` so score changes count up. */
+function useCountUp(target: number | null, duration = 900): number | null {
+    const [display, setDisplay] = useState<number | null>(target);
+    const displayRef = useRef<number | null>(target);
+    useEffect(() => {
+        if (target === null) { displayRef.current = null; setDisplay(null); return; }
+        const from = displayRef.current ?? 0;
+        if (from === target) { displayRef.current = target; setDisplay(target); return; }
+        const start = Date.now();
+        let raf: number;
+        const tick = () => {
+            const t = Math.min((Date.now() - start) / duration, 1);
+            const eased = 1 - Math.pow(1 - t, 3);
+            const value = Math.round(from + (target - from) * eased);
+            displayRef.current = value;
+            setDisplay(value);
+            if (t < 1) raf = requestAnimationFrame(tick);
+        };
+        raf = requestAnimationFrame(tick);
+        return () => cancelAnimationFrame(raf);
+    }, [target, duration]);
+    return display;
+}
+
 export default function Dashboard() {
     const [showPulseModal, setShowPulseModal] = useState(false);
     const [pulseSummary, setPulseSummary] = useState<PulseSummary | null>(null);
@@ -61,25 +91,20 @@ export default function Dashboard() {
     const styles = isDark ? darkStyles : lightStyles;
     const insets = useSafeAreaInsets();
 
-    // ── Animated progress bar ──
-    const progressAnim = useRef(new Animated.Value(0)).current;
+    // ── Animated progress bar (runs on the UI thread) ──
+    const progress = useSharedValue(0);
+    const progressStyle = useAnimatedStyle(() => ({ width: `${progress.value}%` }));
 
-    // ── Card press scales ──
-    const aiCardScale = useRef(new Animated.Value(1)).current;
-    const journalCardScale = useRef(new Animated.Value(1)).current;
+    const [refreshing, setRefreshing] = useState(false);
 
-    const pressIn = (anim: Animated.Value) =>
-        Animated.spring(anim, { toValue: 0.97, useNativeDriver: true, tension: 160, friction: 7 }).start();
-    const pressOut = (anim: Animated.Value) =>
-        Animated.spring(anim, { toValue: 1, useNativeDriver: true, tension: 160, friction: 7 }).start();
-
-    const { userId, token, profile, setProfile, lastPulseCheckedAt, setLastPulseCheckedAt } = useAppStore(s => ({
+    const { userId, token, profile, setProfile, lastPulseCheckedAt, setLastPulseCheckedAt, showToast } = useAppStore(s => ({
         userId: s.userId,
         token: s.token,
         profile: s.profile,
         setProfile: s.setProfile,
         lastPulseCheckedAt: s.lastPulseCheckedAt,
         setLastPulseCheckedAt: s.setLastPulseCheckedAt,
+        showToast: s.showToast,
     }));
 
     const getPHMidnightUTC = (): number => {
@@ -99,8 +124,15 @@ export default function Dashboard() {
     useEffect(() => {
         if (!userId || !token) { setPrefsReady(true); return; }
         getUserPrefs(userId, token)
-            .then(prefs => setLastPulseCheckedAt(prefs.lastPulseCheckedAt))
-            .catch(() => {})
+            .then(prefs => {
+                // Newest timestamp wins: the persisted local value survives an
+                // offline open, and a stale/failed server write can't resurrect
+                // the check-in modal after a successful local check-in.
+                const local = lastPulseCheckedAtRef.current ?? 0;
+                const server = prefs.lastPulseCheckedAt ?? 0;
+                setLastPulseCheckedAt(Math.max(local, server) || null);
+            })
+            .catch(() => {}) // offline — keep the persisted value
             .finally(() => setPrefsReady(true));
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
@@ -144,19 +176,28 @@ export default function Dashboard() {
         const now = Date.now();
         setLastPulseCheckedAt(now);
         if (userId && token) {
+            const pulseScore = computePulseScore(data.moodLevel, data.sleepDuration);
+            const log = {
+                moodLevel: data.moodLevel,
+                moodLabel: data.moodLabel,
+                sleepDuration: data.sleepDuration,
+                pulseScore,
+                date: phDateString(now),
+            };
             try {
-                const pulseScore = computePulseScore(data.moodLevel, data.sleepDuration);
-                await logDailyPulse(userId, token, {
-                    moodLevel: data.moodLevel,
-                    moodLabel: data.moodLabel,
-                    sleepDuration: data.sleepDuration,
-                    pulseScore,
-                });
+                await logDailyPulse(userId, token, log);
                 updateUserPrefs(userId, token, { lastPulseCheckedAt: now })
                     .catch(e => console.warn('Failed to save lastPulseCheckedAt:', e));
                 await Promise.all([fetchSummary(), fetchRecentPulse()]);
             } catch (e) {
-                console.error('Failed to log daily pulse:', e);
+                if (isNetworkError(e)) {
+                    // Offline — keep the check-in and sync it when connectivity returns.
+                    await enqueueWrite({ kind: 'pulse', userId, date: log.date, payload: log });
+                    showToast("You're offline — check-in saved and will sync automatically");
+                } else {
+                    console.error('Failed to log daily pulse:', e);
+                    showToast("Couldn't save your check-in. Please try again.");
+                }
             }
         }
         setPendingPulseData({
@@ -248,13 +289,18 @@ export default function Dashboard() {
     // Animate progress bar whenever pulseScore changes
     useEffect(() => {
         const target = Math.min(((pulseScore ?? 0) / PULSE_GOAL) * 100, 100);
-        Animated.timing(progressAnim, {
-            toValue: target,
-            duration: 900,
-            useNativeDriver: false,
-        }).start();
+        progress.value = withTiming(target, { duration: 900, easing: Easing.out(Easing.cubic) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [pulseScore]);
+
+    // Score counts up in sync with the progress bar
+    const displayScore = useCountUp(pulseScore);
+
+    const onRefresh = useCallback(async () => {
+        setRefreshing(true);
+        await Promise.all([fetchSummary(), fetchRecentPulse(), fetchUnreadCount()]);
+        setRefreshing(false);
+    }, [fetchSummary, fetchRecentPulse, fetchUnreadCount]);
 
     return (
         <View style={styles.container}>
@@ -262,9 +308,18 @@ export default function Dashboard() {
                 style={styles.scrollView}
                 showsVerticalScrollIndicator={false}
                 contentContainerStyle={{ paddingTop: insets.top + s(12), paddingBottom: insets.bottom + s(100) }}
+                refreshControl={
+                    <RefreshControl
+                        refreshing={refreshing}
+                        onRefresh={onRefresh}
+                        tintColor="#0ea5e9"
+                        colors={['#0ea5e9']}
+                        progressViewOffset={insets.top}
+                    />
+                }
             >
                     {/* ── Header ── */}
-                    <View style={styles.header}>
+                    <Animated.View entering={FadeInDown.duration(400)} style={styles.header}>
                         <View style={styles.headerLeft}>
                             <TouchableOpacity
                                 style={styles.avatarContainer}
@@ -293,10 +348,10 @@ export default function Dashboard() {
                                 </View>
                             )}
                         </TouchableOpacity>
-                    </View>
+                    </Animated.View>
 
                     {/* ── Daily Pulse Score ── */}
-                    <View style={[styles.card, { overflow: 'hidden' }]}>
+                    <Animated.View entering={FadeInDown.duration(400).delay(60)} style={[styles.card, { overflow: 'hidden' }]}>
                         {/* Colored accent stripe tied to wellness condition */}
                         <View style={[styles.scoreAccentStripe, { backgroundColor: accentColor }]} />
                         <View style={styles.cardHeader}>
@@ -312,20 +367,14 @@ export default function Dashboard() {
                         </View>
                         <View style={styles.scoreRow}>
                             <Text style={[styles.pulseScore, { color: accentColor }]}>
-                                {pulseScore !== null ? pulseScore : '—'}
+                                {displayScore !== null ? displayScore : '—'}
                             </Text>
                             <Text style={styles.vsYesterday}>
                                 {pulseScore !== null ? 'vs. yesterday' : 'No data yet'}
                             </Text>
                         </View>
                         <View style={styles.progressTrack}>
-                            <Animated.View style={[styles.progressFill, {
-                                backgroundColor: accentColor,
-                                width: progressAnim.interpolate({
-                                    inputRange: [0, 100],
-                                    outputRange: ['0%', '100%'],
-                                }),
-                            }]} />
+                            <Animated.View style={[styles.progressFill, { backgroundColor: accentColor }, progressStyle]} />
                         </View>
                         <View style={styles.conditionRow}>
                             <Text style={styles.conditionText}>
@@ -333,41 +382,46 @@ export default function Dashboard() {
                             </Text>
                             <Text style={styles.goalText}>Goal: {PULSE_GOAL}</Text>
                         </View>
-                    </View>
+                    </Animated.View>
 
                     {/* ── Streak ── */}
-                    <CardStreak
-                        streakDays={pulseSummary?.streakDays ?? 0}
-                        isDark={isDark}
-                    />
+                    <Animated.View entering={FadeInDown.duration(400).delay(120)}>
+                        <CardStreak
+                            streakDays={pulseSummary?.streakDays ?? 0}
+                            isDark={isDark}
+                        />
+                    </Animated.View>
 
                     {/* ── Weekly Summary ── */}
-                    <CardWeeklySummary
-                        avgMood={pulseSummary?.avgMood ?? null}
-                        avgSleep={hasStats ? pulseSummary!.avgSleep : null}
-                        daysLogged={pulseSummary?.daysLogged ?? 0}
-                        avgMoodPrev={pulseSummary?.avgMoodPrev ?? null}
-                        avgSleepPrev={pulseSummary?.avgSleepPrev ?? null}
-                        isDark={isDark}
-                    />
+                    <Animated.View entering={FadeInDown.duration(400).delay(180)}>
+                        <CardWeeklySummary
+                            avgMood={pulseSummary?.avgMood ?? null}
+                            avgSleep={hasStats ? pulseSummary!.avgSleep : null}
+                            daysLogged={pulseSummary?.daysLogged ?? 0}
+                            avgMoodPrev={pulseSummary?.avgMoodPrev ?? null}
+                            avgSleepPrev={pulseSummary?.avgSleepPrev ?? null}
+                            isDark={isDark}
+                        />
+                    </Animated.View>
 
                     {/* ── Mood Trend Insight ── */}
-                    <CardMoodInsight
-                        moodBars={moodBars}
-                        avgMood={pulseSummary?.avgMood ?? null}
-                        avgMoodPrev={pulseSummary?.avgMoodPrev ?? null}
-                        moodStability={moodLabel as 'High' | 'Medium' | 'Low' | null}
-                        todayMood={todayEntry?.moodLevel ?? null}
-                        isDark={isDark}
-                    />
+                    <Animated.View entering={FadeInDown.duration(400).delay(240)}>
+                        <CardMoodInsight
+                            moodBars={moodBars}
+                            avgMood={pulseSummary?.avgMood ?? null}
+                            avgMoodPrev={pulseSummary?.avgMoodPrev ?? null}
+                            moodStability={moodLabel as 'High' | 'Medium' | 'Low' | null}
+                            todayMood={todayEntry?.moodLevel ?? null}
+                            isDark={isDark}
+                        />
+                    </Animated.View>
 
                     {/* ── Weekly Assessment (AI) ── */}
-                    <Pressable
-                        onPressIn={() => pressIn(aiCardScale)}
-                        onPressOut={() => pressOut(aiCardScale)}
-                        onPress={() => router.push('/pages/DailyPulseAi')}
-                    >
-                        <Animated.View style={[styles.aiCard, { transform: [{ scale: aiCardScale }] }]}>
+                    <Animated.View entering={FadeInDown.duration(400).delay(300)}>
+                        <AnimatedPressable
+                            style={styles.aiCard}
+                            onPress={() => router.push('/pages/DailyPulseAi')}
+                        >
                             <View style={styles.aiCardHeader}>
                                 <View style={styles.aiIconBox}>
                                     <Sparkles size={s(18)} color="#0ea5e9" />
@@ -388,16 +442,15 @@ export default function Dashboard() {
                                 <Text style={styles.aiCardCta}>View my assessment</Text>
                                 <ChevronRight size={s(14)} color="#0ea5e9" />
                             </View>
-                        </Animated.View>
-                    </Pressable>
+                        </AnimatedPressable>
+                    </Animated.View>
 
                     {/* ── Journal ── */}
-                    <Pressable
-                        onPressIn={() => pressIn(journalCardScale)}
-                        onPressOut={() => pressOut(journalCardScale)}
-                        onPress={() => router.push('/(tabs)/journal')}
-                    >
-                        <Animated.View style={[styles.journalCard, { transform: [{ scale: journalCardScale }] }]}>
+                    <Animated.View entering={FadeInDown.duration(400).delay(360)}>
+                        <AnimatedPressable
+                            style={styles.journalCard}
+                            onPress={() => router.push('/(tabs)/journal')}
+                        >
                             <View style={styles.journalLeft}>
                                 <View style={styles.journalIconBox}>
                                     <BookOpen size={s(18)} color="#0ea5e9" />
@@ -408,8 +461,8 @@ export default function Dashboard() {
                                 </View>
                             </View>
                             <ChevronRight size={s(18)} color="#0ea5e9" />
-                        </Animated.View>
-                    </Pressable>
+                        </AnimatedPressable>
+                    </Animated.View>
 
             </ScrollView>
 

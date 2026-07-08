@@ -1,0 +1,40 @@
+# Render Blueprint — deploys Pulse-Backend as a free web service.
+# Dashboard → New → Blueprint → pick this repo, then fill in the env values
+# (they mirror Pulse-Backend/.env.example).
+#
+# Free-tier note: free services spin down after ~15 min of no traffic, which
+# would stall the in-process reminder crons. Point a free UptimeRobot monitor
+# at GET / every 5 minutes to keep it awake; the cron's startup catch-up
+# (last 3 PH hours) self-heals any gap that slips through anyway.
+
+services:
+  - type: web
+    name: pulse-backend
+    runtime: node
+    rootDir: Pulse-Backend
+    plan: free
+    region: singapore
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /
+    envVars:
+      - key: AI_PROVIDER
+        value: groq
+      - key: ENFORCE_AI_PLAN
+        value: "false"
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: llama-3.1-8b-instant
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      - key: FIREBASE_WEB_API_KEY
+        sync: false
+      - key: FIREBASE_PROJECT_ID
+        sync: false
+      - key: FIREBASE_STORAGE_BUCKET
+        sync: false
+      - key: FIREBASE_SERVICE_ACCOUNT_JSON
+        sync: false

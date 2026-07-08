@@ -1,8 +1,10 @@
 import { Tabs } from 'expo-router';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { useColorScheme, View, Pressable, Animated, Dimensions, Platform } from 'react-native';
+import { PlatformPressable } from '@react-navigation/elements';
+import { useColorScheme, View, Dimensions, Platform } from 'react-native';
+import Animated, { useSharedValue, useAnimatedStyle, withTiming, ZoomIn } from 'react-native-reanimated';
 import { LayoutDashboard, BarChart2, BookOpen, User } from 'lucide-react-native';
-import { useRef } from 'react';
+import { triggerHaptic } from '../utils/haptics';
 
 const { width: SW } = Dimensions.get('window');
 const s = (n: number) => Math.round((SW / 375) * n);
@@ -12,28 +14,35 @@ const s = (n: number) => Math.round((SW / 375) * n);
 export const FLOATING_TAB_BAR_HEIGHT = s(68) + 20;
 
 function AnimatedTabButton({ children, style, onPressIn: origPressIn, onPressOut: origPressOut, ...rest }: any) {
-    const scale = useRef(new Animated.Value(1)).current;
+    const scale = useSharedValue(1);
+    const animatedStyle = useAnimatedStyle(() => ({
+        transform: [{ scale: scale.value }],
+    }));
 
     const handlePressIn = (e: any) => {
-        Animated.spring(scale, { toValue: 0.82, useNativeDriver: true, tension: 200, friction: 8 }).start();
+        scale.value = withTiming(0.94, { duration: 90 });
+        triggerHaptic('selection');
         origPressIn?.(e);
     };
     const handlePressOut = (e: any) => {
-        Animated.spring(scale, { toValue: 1, useNativeDriver: true, tension: 200, friction: 8 }).start();
+        scale.value = withTiming(1, { duration: 120 });
         origPressOut?.(e);
     };
 
     return (
-        <Pressable
+        // PlatformPressable (not RN Pressable): on web the tab renders as an <a href>,
+        // and this calls e.preventDefault() so clicks navigate client-side instead of
+        // triggering a full browser page load.
+        <PlatformPressable
             {...rest}
             style={[style, { flex: 1, alignItems: 'center', justifyContent: 'center' }]}
             onPressIn={handlePressIn}
             onPressOut={handlePressOut}
         >
-            <Animated.View style={{ transform: [{ scale }], alignItems: 'center', justifyContent: 'center' }}>
+            <Animated.View style={[{ alignItems: 'center', justifyContent: 'center' }, animatedStyle]}>
                 {children}
             </Animated.View>
-        </Pressable>
+        </PlatformPressable>
     );
 }
 
@@ -52,12 +61,15 @@ function TabIcon({ icon: Icon, color, focused }: TabIconProps) {
                 strokeWidth={focused ? 2.5 : 1.75}
             />
             {focused && (
-                <View style={{
-                    width: s(4),
-                    height: s(4),
-                    borderRadius: s(2),
-                    backgroundColor: '#0ea5e9',
-                }} />
+                <Animated.View
+                    entering={ZoomIn.springify().damping(12).stiffness(320)}
+                    style={{
+                        width: s(4),
+                        height: s(4),
+                        borderRadius: s(2),
+                        backgroundColor: '#0ea5e9',
+                    }}
+                />
             )}
         </View>
     );
@@ -150,7 +162,6 @@ export default function TabLayout() {
                     }}
                 />
                 {/* Hidden screens */}
-                <Tabs.Screen name="landing" options={{ href: null }} />
                 <Tabs.Screen name="reminders" options={{ href: null }} />
             </Tabs>
         </SafeAreaProvider>

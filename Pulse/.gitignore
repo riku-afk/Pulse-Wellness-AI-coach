@@ -41,4 +41,5 @@ app-example
 # generated native folders
 /ios
 /android
-*google-services*.json
+# NOTE: google-services.json is intentionally NOT ignored — EAS needs it for
+# prebuild, and Android Firebase config isn't a secret (it ships in every APK).

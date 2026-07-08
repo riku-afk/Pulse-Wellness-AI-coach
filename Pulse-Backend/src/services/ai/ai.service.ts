@@ -272,10 +272,31 @@ One-line reflection:`;
 // Weekly wellness assessment
 // ---------------------------------------------------------------------------
 
+export interface JournalContextEntry {
+    date: string;
+    moodTag: number | null;
+    excerpt: string;
+}
+
+function formatJournalContext(journalEntries: JournalContextEntry[]): string {
+    const lines = journalEntries.map(j => {
+        const mood = j.moodTag != null ? ` (mood ${j.moodTag}/10)` : '';
+        return `${j.date}${mood}: "${j.excerpt}"`;
+    }).join('\n');
+
+    return `
+
+The user has also shared their journal entries from this week (they opted in to this):
+${lines}
+
+When journal themes are relevant, weave them in naturally — e.g. "you mentioned feeling stretched at work twice this week". Reference feelings and themes, never quote long passages back verbatim. If the journal reveals what's driving a mood or sleep pattern in the numbers, connect the two.`;
+}
+
 function buildWeeklyAssessmentPrompt(
     weekHistory: WeekEntry[],
     followUpQuestion?: string,
     previousAssessment?: string,
+    journalEntries: JournalContextEntry[] = [],
 ): string {
     const dataLines = weekHistory.map(e => {
         const d = new Date(e.date + 'T00:00:00Z');
@@ -283,10 +304,12 @@ function buildWeeklyAssessmentPrompt(
         return `${day}: Mood ${e.moodLevel}/5 (${e.moodLabel}), Sleep ${e.sleepDuration}h, Pulse Score ${e.pulseScore}`;
     }).join('\n');
 
+    const journalContext = journalEntries.length > 0 ? formatJournalContext(journalEntries) : '';
+
     if (followUpQuestion && previousAssessment) {
         return `You are Pulse, a personal AI wellness coach. You previously delivered this weekly assessment:
 
-${previousAssessment}
+${previousAssessment}${journalContext}
 
 The user has a follow-up question: "${followUpQuestion}"
 
@@ -298,7 +321,7 @@ Pulse:`;
     return `You are Pulse, a personal AI wellness coach. Analyze the user's week of health data and deliver a concise, insightful wellness assessment.
 
 Week data (newest first):
-${dataLines}
+${dataLines}${journalContext}
 
 Write the assessment using exactly these four labeled sections. Each section is a single short paragraph. No markdown symbols (no **, ##, or bullet points). Plain text only.
 
@@ -322,9 +345,10 @@ export async function* generateWeeklyAssessment(
     weekHistory: WeekEntry[],
     followUpQuestion?: string,
     previousAssessment?: string,
+    journalEntries: JournalContextEntry[] = [],
 ): AsyncGenerator<string> {
     const provider = (process.env.AI_PROVIDER ?? 'ollama') as AIProvider;
-    const prompt = buildWeeklyAssessmentPrompt(weekHistory, followUpQuestion, previousAssessment);
+    const prompt = buildWeeklyAssessmentPrompt(weekHistory, followUpQuestion, previousAssessment, journalEntries);
 
     if (provider === 'gemini') {
         yield* streamGemini(prompt);

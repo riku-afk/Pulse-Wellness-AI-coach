@@ -1,4 +1,7 @@
-const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:5000';
+import { apiJson, apiFetch } from './apiClient';
+
+// Re-exported so existing imports (e.g. app/index.tsx) keep working.
+export { refreshIdToken, refreshSession, getValidToken } from './apiClient';
 
 export interface AuthUser {
     token: string;
@@ -17,94 +20,65 @@ export interface UserProfile {
 }
 
 export async function registerUser(email: string, password: string): Promise<AuthUser> {
-    const response = await fetch(`${BACKEND_URL}/api/v1/auth/register`, {
+    return apiJson<AuthUser>('/api/v1/auth/register', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: { email, password },
+        auth: false,
+        errorMessage: 'Registration failed',
     });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-        throw new Error(data.error || 'Registration failed');
-    }
-
-    return data;
 }
 
 export async function loginUser(email: string, password: string): Promise<AuthUser> {
-    const response = await fetch(`${BACKEND_URL}/api/v1/auth/login`, {
+    return apiJson<AuthUser>('/api/v1/auth/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: { email, password },
+        auth: false,
+        errorMessage: 'Login failed',
     });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-        throw new Error(data.error || 'Login failed');
-    }
-
-    return data;
 }
+
 export async function checkProfileComplete(userId: string, token: string): Promise<boolean> {
-    const response = await fetch(`${BACKEND_URL}/api/v1/auth/profile/check/${userId}`, {
-        headers: { 'Authorization': `Bearer ${token}` },
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-        throw new Error(data.error || 'Failed to check profile');
-    }
-
-    return data.profileCompleted as boolean;
+    const data = await apiJson<{ profileCompleted: boolean }>(
+        `/api/v1/auth/profile/check/${userId}`,
+        { token, errorMessage: 'Failed to check profile' },
+    );
+    return data.profileCompleted;
 }
 
 export async function updateProfile(userId: string, token: string, profile: UserProfile): Promise<void> {
-    const response = await fetch(`${BACKEND_URL}/api/v1/auth/profile/${userId}`, {
+    await apiJson(`/api/v1/auth/profile/${userId}`, {
         method: 'PATCH',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify(profile),
+        body: profile,
+        token,
+        errorMessage: 'Failed to update profile',
     });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-        throw new Error(data.error || 'Failed to update profile');
-    }
 }
 
 export async function saveProfile(userId: string, token: string, profile: UserProfile): Promise<void> {
-    const response = await fetch(`${BACKEND_URL}/api/v1/auth/profile`, {
+    await apiJson('/api/v1/auth/profile', {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({ userId, ...profile }),
+        body: { userId, ...profile },
+        token,
+        errorMessage: 'Failed to save profile',
     });
+}
 
-    const data = await response.json();
-
-    if (!response.ok) {
-        throw new Error(data.error || 'Failed to save profile');
-    }
+// Firestore REST document shape returned by the backend profile routes.
+interface FirestoreProfileResponse {
+    profile?: {
+        fields?: Record<string, {
+            stringValue?: string;
+            integerValue?: string;
+            booleanValue?: boolean;
+        }>;
+    };
 }
 
 export async function getProfile(userId: string, token: string): Promise<UserProfile> {
-    const response = await fetch(`${BACKEND_URL}/api/v1/auth/profile/${userId}`, {
-        headers: { 'Authorization': `Bearer ${token}` },
+    const data = await apiJson<FirestoreProfileResponse>(`/api/v1/auth/profile/${userId}`, {
+        token,
+        errorMessage: 'Failed to fetch profile',
     });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-        throw new Error(data.error || 'Failed to fetch profile');
-    }
 
     // Backend returns { profile: <Firestore REST document> }
     // Firestore REST format: { fields: { fieldName: { stringValue/integerValue/... } } }
@@ -126,116 +100,90 @@ export async function uploadAvatar(
     base64: string,
     mimeType: string
 ): Promise<string> {
-    const response = await fetch(`${BACKEND_URL}/api/v1/auth/profile/${userId}/avatar`, {
+    const data = await apiJson<{ photoURL: string }>(`/api/v1/auth/profile/${userId}/avatar`, {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({ base64, mimeType }),
+        body: { base64, mimeType },
+        token,
+        errorMessage: 'Failed to upload avatar',
     });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-        throw new Error(data.error || 'Failed to upload avatar');
-    }
-
-    return data.photoURL as string;
+    return data.photoURL;
 }
+
+export type AiPlan = 'local' | 'cloud';
 
 export interface UserPrefs {
     lastPulseCheckedAt: number | null;
-    hasSeenLanding: boolean;
+    /** User opted in to the AI reading journal entries for weekly assessments. */
+    journalAiEnabled: boolean;
+    /** Daily reminder push toggle (default on). */
+    notificationsEnabled: boolean;
+    /** PH-time hour (0-23) for the morning check-in reminder. */
+    morningReminderHour: number;
+    /** PH-time hour (0-23) for the evening check-in reminder. */
+    eveningReminderHour: number;
+    /** AI engine choice made after login; null = not chosen yet (route to choose-plan). */
+    aiPlan: AiPlan | null;
 }
 
-/** Reads lastPulseCheckedAt and hasSeenLanding from the user's Firestore document. */
+/** Reads behavioural prefs (lastPulseCheckedAt, AI settings, reminder hours) from the user's Firestore document. */
 export async function getUserPrefs(userId: string, token: string): Promise<UserPrefs> {
-    const response = await fetch(`${BACKEND_URL}/api/v1/auth/profile/${userId}`, {
-        headers: { 'Authorization': `Bearer ${token}` },
+    const data = await apiJson<FirestoreProfileResponse>(`/api/v1/auth/profile/${userId}`, {
+        token,
+        errorMessage: 'Failed to fetch user prefs',
     });
 
-    const data = await response.json();
-
-    if (!response.ok) {
-        throw new Error(data.error || 'Failed to fetch user prefs');
-    }
-
     const fields = data.profile?.fields;
+    const hour = (raw: string | undefined, fallback: number): number => {
+        const n = raw ? parseInt(raw, 10) : NaN;
+        return Number.isInteger(n) && n >= 0 && n <= 23 ? n : fallback;
+    };
     return {
         lastPulseCheckedAt: fields?.lastPulseCheckedAt?.integerValue
             ? parseInt(fields.lastPulseCheckedAt.integerValue, 10)
             : null,
-        hasSeenLanding: fields?.hasSeenLanding?.booleanValue === true,
+        journalAiEnabled: fields?.journalAiEnabled?.booleanValue === true,
+        notificationsEnabled: fields?.notificationsEnabled?.booleanValue !== false, // default on
+        morningReminderHour: hour(fields?.morningReminderHour?.integerValue, 7),
+        eveningReminderHour: hour(fields?.eveningReminderHour?.integerValue, 18),
+        aiPlan: fields?.aiPlan?.stringValue === 'local' || fields?.aiPlan?.stringValue === 'cloud'
+            ? fields.aiPlan.stringValue as AiPlan
+            : null,
     };
 }
 
-/** Partially updates lastPulseCheckedAt and/or hasSeenLanding in Firestore (fire-and-forget safe). */
+/** Partially updates behavioural prefs in Firestore (fire-and-forget safe). */
 export async function updateUserPrefs(
     userId: string,
     token: string,
-    prefs: { lastPulseCheckedAt?: number; hasSeenLanding?: boolean }
-): Promise<void> {
-    const response = await fetch(`${BACKEND_URL}/api/v1/auth/profile/${userId}/prefs`, {
-        method: 'PATCH',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify(prefs),
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-        throw new Error(data.error || 'Failed to update user prefs');
+    prefs: {
+        lastPulseCheckedAt?: number;
+        journalAiEnabled?: boolean;
+        morningReminderHour?: number;
+        eveningReminderHour?: number;
+        aiPlan?: AiPlan;
     }
+): Promise<void> {
+    await apiJson(`/api/v1/auth/profile/${userId}/prefs`, {
+        method: 'PATCH',
+        body: prefs,
+        token,
+        errorMessage: 'Failed to update user prefs',
+    });
 }
 
-export async function logout(userId: string): Promise<void> {
-    const response = await fetch(`${BACKEND_URL}/api/v1/auth/logout`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId }),
-    });
-
+/** Clears this device's FCM token server-side. The backend derives the user from the ID token. */
+export async function logout(token: string): Promise<void> {
+    const response = await apiFetch('/api/v1/auth/logout', { method: 'POST', token });
     if (!response.ok) {
         throw new Error('Logout failed');
     }
 }
-/** Exchange a Firebase refreshToken for a fresh idToken. Returns the new idToken and refreshToken. */
-export async function refreshIdToken(refreshToken: string): Promise<{ token: string; refreshToken: string }> {
-    const apiKey = 'AIzaSyCORxS1LYSylrliTWJQEjXMNq_soG30RpU';
-    const response = await fetch(
-        `https://securetoken.googleapis.com/v1/token?key=${apiKey}`,
-        {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ grant_type: 'refresh_token', refresh_token: refreshToken }),
-        }
-    );
-
-    const data = await response.json();
-    if (!response.ok) {
-        throw new Error(data.error?.message || 'Token refresh failed');
-    }
-
-    return {
-        token: data.id_token as string,
-        refreshToken: data.refresh_token as string,
-    };
-}
 
 export async function resetPassword(email: string): Promise<void> {
-    const response = await fetch(`${BACKEND_URL}/api/v1/auth/forgot-password`, {
+    await apiJson('/api/v1/auth/forgot-password', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
+        body: { email },
+        auth: false,
+        errorMessage: 'Failed to send password reset email',
     });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-        throw new Error(data.error || 'Failed to send password reset email');
-    }
 }

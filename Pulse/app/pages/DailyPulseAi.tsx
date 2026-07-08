@@ -11,11 +11,48 @@ import {
     Platform,
     Dimensions,
 } from 'react-native';
+import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 import { router } from 'expo-router';
 import { ArrowLeft, RefreshCw, ArrowUp, Moon, Smile, Calendar, Sparkles } from 'lucide-react-native';
 import { streamWeeklyAssessment, WeekEntry } from '../services/PulseAi';
 import { getRecentPulse, RecentPulseEntry } from '../services/pulse';
 import { useAppStore } from '../store/appStore';
+import { triggerHaptic } from '../utils/haptics';
+import { getCache, setCache } from '../utils/cache';
+import { phDateString } from '../utils/date';
+
+interface CachedAssessment {
+    text: string;
+    entries: RecentPulseEntry[];
+    /** Newest check-in date covered by this assessment — days up to and
+     *  including it don't count toward the next cycle's streak. */
+    assessedThrough?: string;
+}
+
+/**
+ * Consecutive daily check-ins ending today (or yesterday, if today's isn't
+ * logged yet), not counting days already consumed by the last assessment.
+ * A missed day breaks the chain — the streak restarts from zero.
+ */
+function computeAssessmentStreak(entries: RecentPulseEntry[], assessedThrough?: string): number {
+    const dates = new Set(entries.map(e => e.date));
+    const DAY = 24 * 60 * 60 * 1000;
+    const today = phDateString();
+    const yesterday = phDateString(Date.now() - DAY);
+
+    let cursor = dates.has(today) ? today : dates.has(yesterday) ? yesterday : null;
+    if (!cursor) return 0;
+
+    let cursorMs = Date.parse(cursor);
+    let streak = 0;
+    while (cursor && dates.has(cursor) && streak < 7) {
+        if (assessedThrough && cursor <= assessedThrough) break;
+        streak++;
+        cursorMs -= DAY;
+        cursor = new Date(cursorMs).toISOString().split('T')[0];
+    }
+    return streak;
+}
 
 const { width: SW } = Dimensions.get('window');
 const s = (n: number) => Math.round((SW / 375) * n);
@@ -43,6 +80,7 @@ export default function DailyPulseAI() {
 
     const [weekEntries, setWeekEntries] = useState<RecentPulseEntry[]>([]);
     const [assessment, setAssessment] = useState('');
+    const [streakDays, setStreakDays] = useState<number | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [isStreaming, setIsStreaming] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -63,14 +101,19 @@ export default function DailyPulseAI() {
     const abortRef = useRef<AbortController | null>(null);
     const weekEntriesRef = useRef<RecentPulseEntry[]>([]);
 
-    // Main assessment typewriter
+    // Main assessment typewriter. The drain rate adapts to the queue size:
+    // live generation trickles in small chunks (4 chars/tick), but a cached
+    // assessment arrives as one big chunk — draining it at the base rate would
+    // fake a ~8s "generation". Large queues drain in a fast cascade instead.
     useEffect(() => {
         if (!isStreaming) return;
         charQueueRef.current = '';
         const id = setInterval(() => {
-            if (charQueueRef.current.length > 0) {
-                const chars = charQueueRef.current.slice(0, 4);
-                charQueueRef.current = charQueueRef.current.slice(4);
+            const queued = charQueueRef.current.length;
+            if (queued > 0) {
+                const n = Math.max(4, Math.floor(queued / 10));
+                const chars = charQueueRef.current.slice(0, n);
+                charQueueRef.current = charQueueRef.current.slice(n);
                 setAssessment(prev => prev + chars);
             } else if (networkDoneRef.current) {
                 networkDoneRef.current = false;
@@ -144,6 +187,15 @@ export default function DailyPulseAI() {
                 () => { networkDoneRef.current = true; },
                 controller.signal,
             );
+            // Persist for instant display on later visits. assessedThrough marks
+            // this cycle as consumed — the streak restarts from the next day.
+            if (userId && assessmentRef.current.trim()) {
+                setCache(`weeklyAssessment_${userId}`, {
+                    text: assessmentRef.current,
+                    entries,
+                    assessedThrough: entries[0]?.date,
+                } satisfies CachedAssessment);
+            }
         } catch (err) {
             if (err instanceof Error && err.name === 'AbortError') return;
             charQueueRef.current = '';
@@ -153,22 +205,62 @@ export default function DailyPulseAI() {
         }
     };
 
-    const loadAndAssess = async () => {
+    /**
+     * Streak-gated flow: a new assessment only generates after 7 consecutive
+     * daily check-ins that aren't already covered by the previous assessment.
+     * Until then the last cached assessment stays viewable and the screen
+     * shows streak progress. `forceLive` (refresh button) regenerates when
+     * the streak is complete, even if this cycle was already assessed.
+     */
+    const loadAndAssess = async (forceLive = false) => {
         if (!userId || !token) return;
-        setIsLoading(true);
+
+        const cached = getCache<CachedAssessment>(`weeklyAssessment_${userId}`);
+        // Show the cached assessment immediately while we check the streak.
+        if (cached?.text) {
+            assessmentRef.current = cached.text;
+            setAssessment(cached.text);
+            if (cached.entries.length > 0) {
+                setWeekEntries(cached.entries);
+                weekEntriesRef.current = cached.entries;
+            }
+            setIsLoading(false);
+        } else {
+            setIsLoading(true);
+        }
         setError(null);
-        setAssessment('');
-        setWeekEntries([]);
-        weekEntriesRef.current = [];
 
         try {
             const entries = await getRecentPulse(userId, token, 7);
             setWeekEntries(entries);
             weekEntriesRef.current = entries;
-            await runAssessment(entries);
+
+            const streak = computeAssessmentStreak(entries, cached?.assessedThrough);
+            setStreakDays(streak);
+
+            if (entries.length === 0) {
+                setIsLoading(false);
+                if (!cached?.text) {
+                    setError('No pulse data yet. Log your first daily check-in to start your 7-day streak.');
+                }
+                return;
+            }
+
+            const newestDate = entries[0]?.date;
+            const alreadyAssessedThisCycle = cached?.assessedThrough === newestDate;
+
+            if (streak >= 7 && (forceLive || !alreadyAssessedThisCycle)) {
+                await runAssessment(entries);
+                return;
+            }
+
+            // Not due yet (or already assessed today) — cached text stays up.
+            setIsLoading(false);
         } catch {
             setIsLoading(false);
-            setError("Couldn't load your data. Check your connection and try again.");
+            if (!cached?.text) {
+                setError("Couldn't load your data. Check your connection and try again.");
+            }
         }
     };
 
@@ -181,6 +273,7 @@ export default function DailyPulseAI() {
         const question = followUpText.trim();
         if (!question || isFollowUpStreaming || isStreaming) return;
 
+        triggerHaptic('light');
         setFollowUpText('');
         setPendingQuestion(question);
         pendingQuestionRef.current = question;
@@ -243,7 +336,7 @@ export default function DailyPulseAI() {
                 </View>
                 <TouchableOpacity
                     style={styles.headerBtn}
-                    onPress={loadAndAssess}
+                    onPress={() => { triggerHaptic('light'); loadAndAssess(true); }}
                     disabled={isLoading || isStreaming}
                 >
                     <RefreshCw size={s(20)} color={isLoading || isStreaming ? '#334155' : '#64748b'} />
@@ -252,7 +345,7 @@ export default function DailyPulseAI() {
 
             {/* Week Stats Strip */}
             {weekEntries.length > 0 && (
-                <View style={styles.statsStrip}>
+                <Animated.View entering={FadeInDown.duration(380)} style={styles.statsStrip}>
                     <View style={styles.statItem}>
                         <Smile size={s(13)} color="#0ea5e9" />
                         <Text style={styles.statValue}>
@@ -281,10 +374,33 @@ export default function DailyPulseAI() {
                             <View key={i} style={[styles.moodDot, { backgroundColor: moodColor(e.moodLevel) }]} />
                         ))}
                     </View>
-                </View>
+                </Animated.View>
             )}
 
             <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+
+                {/* Streak progress — a new assessment unlocks at 7 consecutive check-ins */}
+                {streakDays !== null && streakDays < 7 && !isLoading && !isStreaming && (
+                    <View style={{
+                        backgroundColor: '#1e293b', borderRadius: s(16),
+                        padding: s(14), marginBottom: s(14),
+                    }}>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: s(8) }}>
+                            <Text style={{ color: '#f8fafc', fontSize: s(13), fontWeight: '700' }}>
+                                Next weekly assessment
+                            </Text>
+                            <Text style={{ color: '#0ea5e9', fontSize: s(13), fontWeight: '700' }}>
+                                {streakDays}/7 days
+                            </Text>
+                        </View>
+                        <View style={{ height: s(6), borderRadius: s(3), backgroundColor: '#334155', overflow: 'hidden' }}>
+                            <View style={{ height: '100%', width: `${(streakDays / 7) * 100}%`, backgroundColor: '#0ea5e9' }} />
+                        </View>
+                        <Text style={{ color: '#94a3b8', fontSize: s(11.5), marginTop: s(8), lineHeight: s(16) }}>
+                            Check in every day — 7 in a row unlocks a fresh assessment. Missing a day restarts the streak.
+                        </Text>
+                    </View>
+                )}
 
                 {/* Loading */}
                 {isLoading && (
@@ -303,7 +419,7 @@ export default function DailyPulseAI() {
 
                 {/* Assessment card */}
                 {(assessment.length > 0 || isStreaming) && !error && (
-                    <View style={styles.aiCard}>
+                    <Animated.View entering={FadeInUp.duration(380)} style={styles.aiCard}>
                         <View style={styles.cardHeader}>
                             <View style={styles.aiAvatar}>
                                 <Sparkles size={s(16)} color="#0ea5e9" />
@@ -320,15 +436,15 @@ export default function DailyPulseAI() {
                                 {assessment}{isStreaming ? '▌' : ''}
                             </Text>
                         )}
-                    </View>
+                    </Animated.View>
                 )}
 
                 {/* Completed follow-ups */}
                 {completedFollowUps.map((fu, i) => (
                     <View key={i}>
-                        <View style={styles.userBubble}>
+                        <Animated.View entering={FadeInUp.duration(320)} style={styles.userBubble}>
                             <Text style={styles.userBubbleText}>{fu.question}</Text>
-                        </View>
+                        </Animated.View>
                         <View style={styles.aiCard}>
                             <View style={styles.cardHeader}>
                                 <View style={styles.aiAvatar}>
@@ -344,10 +460,10 @@ export default function DailyPulseAI() {
                 {/* Currently streaming follow-up */}
                 {pendingQuestion && (
                     <>
-                        <View style={styles.userBubble}>
+                        <Animated.View entering={FadeInUp.duration(320)} style={styles.userBubble}>
                             <Text style={styles.userBubbleText}>{pendingQuestion}</Text>
-                        </View>
-                        <View style={styles.aiCard}>
+                        </Animated.View>
+                        <Animated.View entering={FadeInUp.duration(320).delay(120)} style={styles.aiCard}>
                             <View style={styles.cardHeader}>
                                 <View style={styles.aiAvatar}>
                                     <Sparkles size={s(16)} color="#0ea5e9" />
@@ -364,7 +480,7 @@ export default function DailyPulseAI() {
                                     {streamingAnswer}{isFollowUpStreaming ? '▌' : ''}
                                 </Text>
                             )}
-                        </View>
+                        </Animated.View>
                     </>
                 )}
 

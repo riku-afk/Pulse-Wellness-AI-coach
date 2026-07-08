@@ -30,3 +30,7 @@ export function getAdminDb(): admin.firestore.Firestore | null {
 export function getMessaging(): admin.messaging.Messaging | null {
     return init() ? admin.messaging() : null;
 }
+
+export function getAdminAuth(): admin.auth.Auth | null {
+    return init() ? admin.auth() : null;
+}

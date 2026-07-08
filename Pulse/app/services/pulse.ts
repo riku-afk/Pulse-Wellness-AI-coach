@@ -1,10 +1,12 @@
-const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:5000';
+import { apiJson } from './apiClient';
 
 export interface DailyPulseLog {
     moodLevel: number;
     moodLabel: string;
     sleepDuration: number;
     pulseScore?: number;
+    /** YYYY-MM-DD; lets offline check-ins sync onto the day they were written. */
+    date?: string;
 }
 
 export interface PulseSummary {
@@ -43,37 +45,22 @@ export async function logDailyPulse(
     token: string,
     data: DailyPulseLog
 ): Promise<void> {
-    const response = await fetch(`${BACKEND_URL}/api/v1/pulse/log`, {
+    await apiJson('/api/v1/pulse/log', {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({ userId, ...data }),
+        body: { userId, ...data },
+        token,
+        errorMessage: 'Failed to log daily pulse',
     });
-
-    const json = await response.json();
-
-    if (!response.ok) {
-        throw new Error(json.error || 'Failed to log daily pulse');
-    }
 }
 
 export async function getPulseSummary(
     userId: string,
     token: string
 ): Promise<PulseSummary> {
-    const response = await fetch(`${BACKEND_URL}/api/v1/pulse/${userId}/summary`, {
-        headers: { 'Authorization': `Bearer ${token}` },
+    return apiJson<PulseSummary>(`/api/v1/pulse/${userId}/summary`, {
+        token,
+        errorMessage: 'Failed to fetch pulse summary',
     });
-
-    const json = await response.json();
-
-    if (!response.ok) {
-        throw new Error(json.error || 'Failed to fetch pulse summary');
-    }
-
-    return json as PulseSummary;
 }
 
 export async function getRecentPulse(
@@ -81,17 +68,10 @@ export async function getRecentPulse(
     token: string,
     limit: number = 5
 ): Promise<RecentPulseEntry[]> {
-    const response = await fetch(`${BACKEND_URL}/api/v1/pulse/${userId}/recent?limit=${limit}`, {
-        headers: { 'Authorization': `Bearer ${token}` },
+    return apiJson<RecentPulseEntry[]>(`/api/v1/pulse/${userId}/recent?limit=${limit}`, {
+        token,
+        errorMessage: 'Failed to fetch recent pulse',
     });
-
-    const json = await response.json();
-
-    if (!response.ok) {
-        throw new Error(json.error || 'Failed to fetch recent pulse');
-    }
-
-    return json as RecentPulseEntry[];
 }
 
 export async function getPulseHistory(
@@ -99,17 +79,10 @@ export async function getPulseHistory(
     token: string,
     page: number = 1
 ): Promise<PulseHistoryPage> {
-    const response = await fetch(`${BACKEND_URL}/api/v1/pulse/${userId}/history?page=${page}`, {
-        headers: { 'Authorization': `Bearer ${token}` },
+    return apiJson<PulseHistoryPage>(`/api/v1/pulse/${userId}/history?page=${page}`, {
+        token,
+        errorMessage: 'Failed to fetch pulse history',
     });
-
-    const json = await response.json();
-
-    if (!response.ok) {
-        throw new Error(json.error || 'Failed to fetch pulse history');
-    }
-
-    return json as PulseHistoryPage;
 }
 
 export async function saveAiSuggestion(
@@ -118,17 +91,10 @@ export async function saveAiSuggestion(
     date: string,
     aiSuggestion: string
 ): Promise<void> {
-    const response = await fetch(`${BACKEND_URL}/api/v1/pulse/${userId}/ai/${date}`, {
+    await apiJson(`/api/v1/pulse/${userId}/ai/${date}`, {
         method: 'PATCH',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({ aiSuggestion }),
+        body: { aiSuggestion },
+        token,
+        errorMessage: 'Failed to save AI suggestion',
     });
-
-    if (!response.ok) {
-        const json = await response.json();
-        throw new Error(json.error || 'Failed to save AI suggestion');
-    }
 }

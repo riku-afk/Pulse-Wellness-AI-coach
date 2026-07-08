@@ -2,9 +2,9 @@ import { Router, Request, Response } from 'express';
 import {
     getNotificationsREST,
     markAllReadREST,
-    checkAndNotifyUsers,
 } from '../services/notification/notification.service';
 import { getAdminDb } from '../config/firebase-admin';
+import { requireAuth, AuthedRequest } from '../middleware/auth.middleware';
 
 const router = Router();
 
@@ -13,12 +13,14 @@ const FIRESTORE_BASE_URL = `https://firestore.googleapis.com/v1/projects/${FIREB
 
 // POST /api/v1/notifications/token
 // Register or update the device FCM token for a user + set notificationsEnabled: true.
-// Uses Admin SDK for the Firestore write so it never fails due to an expired user token.
-router.post('/token', async (req: Request, res: Response) => {
-    const { userId, fcmToken } = req.body;
+// The write goes through the Admin SDK, so the userId MUST come from the verified
+// ID token — never from the request body — or anyone could hijack a user's push channel.
+router.post('/token', requireAuth, async (req: AuthedRequest, res: Response) => {
+    const userId = req.uid!;
+    const { fcmToken } = req.body;
 
-    if (!userId || !fcmToken) {
-        res.status(400).json({ error: 'userId and fcmToken are required' });
+    if (!fcmToken) {
+        res.status(400).json({ error: 'fcmToken is required' });
         return;
     }
 
@@ -118,99 +120,6 @@ router.patch('/mark-read', async (req: Request, res: Response) => {
         res.json({ message: 'All notifications marked as read' });
     } catch {
         res.status(500).json({ error: 'Failed to mark notifications as read' });
-    }
-});
-
-// GET /api/v1/notifications/debug?userId=
-// Temporary: diagnose exactly why notifications aren't being sent for a user.
-// Remove once notifications are confirmed working.
-router.get('/debug', async (req: Request, res: Response) => {
-    const { userId } = req.query as { userId?: string };
-    if (!userId) {
-        res.status(400).json({ error: 'userId query param is required' });
-        return;
-    }
-
-    const report: Record<string, unknown> = {};
-
-    // 1. Check Firebase Admin SDK
-    const db = getAdminDb();
-    report.adminSdkInitialized = !!db;
-
-    if (!db) {
-        res.json({ ...report, verdict: 'FIREBASE_SERVICE_ACCOUNT_JSON is not set on Railway — notifications disabled' });
-        return;
-    }
-
-    // 2. Check user document
-    try {
-        const userDoc = await db.collection('users').doc(userId).get();
-        if (!userDoc.exists) {
-            res.json({ ...report, verdict: 'User document not found in Firestore' });
-            return;
-        }
-
-        const data = userDoc.data()!;
-        report.notificationsEnabled = data.notificationsEnabled ?? null;
-        report.fcmTokenPresent = !!data.fcmToken;
-        report.fcmTokenPrefix = data.fcmToken ? String(data.fcmToken).slice(0, 20) + '...' : null;
-
-        // 3. Check if user has pulsed today (PH time)
-        const phOffset = 8 * 60 * 60 * 1000;
-        const todayPH = new Date(Date.now() + phOffset).toISOString().split('T')[0];
-        report.todayPH = todayPH;
-
-        const pulseDoc = await db.collection('users').doc(userId)
-            .collection('dailyPulse').doc(todayPH).get();
-        report.hasPulsedToday = pulseDoc.exists;
-
-        // 4. Check if already notified today
-        const morningSnap = await db.collection('users').doc(userId)
-            .collection('notifications')
-            .where('type', '==', 'morning_reminder')
-            .where('phDate', '==', todayPH)
-            .limit(1)
-            .get();
-        report.morningNotificationSentToday = !morningSnap.empty;
-
-        const eveningSnap = await db.collection('users').doc(userId)
-            .collection('notifications')
-            .where('type', '==', 'evening_reminder')
-            .where('phDate', '==', todayPH)
-            .limit(1)
-            .get();
-        report.eveningNotificationSentToday = !eveningSnap.empty;
-
-        // 5. Verdict
-        if (!data.notificationsEnabled) {
-            report.verdict = 'notificationsEnabled is false or missing — FCM token was never registered from the app';
-        } else if (!data.fcmToken) {
-            report.verdict = 'notificationsEnabled=true but fcmToken is missing';
-        } else if (pulseDoc.exists) {
-            report.verdict = 'User already pulsed today — notifications correctly skipped';
-        } else {
-            report.verdict = 'User is eligible for notifications. If cron fired and no push arrived, the FCM token may be stale/invalid.';
-        }
-
-        res.json(report);
-    } catch (e) {
-        res.status(500).json({ ...report, error: String(e) });
-    }
-});
-
-// POST /api/v1/notifications/test-send?userId=
-// Temporary: manually trigger the morning notification check right now.
-router.post('/test-send', async (req: Request, res: Response) => {
-    const { type } = req.body as { type?: 'morning_reminder' | 'evening_reminder' };
-    if (type !== 'morning_reminder' && type !== 'evening_reminder') {
-        res.status(400).json({ error: 'type must be morning_reminder or evening_reminder' });
-        return;
-    }
-    try {
-        await checkAndNotifyUsers(type);
-        res.json({ message: `${type} check triggered — check Railway logs for details` });
-    } catch (e) {
-        res.status(500).json({ error: String(e) });
     }
 });
 

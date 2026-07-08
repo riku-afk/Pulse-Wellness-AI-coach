@@ -89,7 +89,8 @@ export default function CompleteSignup() {
             await saveProfile(userId, token, profileData);
             setSession(userId, token);
             setProfile(profileData);
-            router.replace('/(tabs)/landing');
+            // New account: pick the AI engine before entering the app.
+            router.replace('/auth/choose-plan');
         } catch (error: any) {
             Alert.alert('Error', error.message || 'Failed to save profile');
         } finally {

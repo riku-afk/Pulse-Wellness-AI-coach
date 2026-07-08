@@ -1,4 +1,4 @@
-const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:5000';
+import { apiJson, apiFetch } from './apiClient';
 
 export interface AppNotification {
     id: string;
@@ -19,18 +19,12 @@ export async function registerFCMToken(
     token: string,
     fcmToken: string,
 ): Promise<void> {
-    const response = await fetch(`${BACKEND_URL}/api/v1/notifications/token`, {
+    // The backend derives the user from the verified ID token; userId is legacy.
+    await apiJson('/api/v1/notifications/token', {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({ userId, fcmToken }),
+        body: { userId, fcmToken },
+        token,
     });
-    if (!response.ok) {
-        const json = await response.json().catch(() => ({})) as { error?: string };
-        throw new Error(json.error ?? `HTTP ${response.status}`);
-    }
 }
 
 export async function setNotificationPreference(
@@ -38,27 +32,21 @@ export async function setNotificationPreference(
     token: string,
     notificationsEnabled: boolean,
 ): Promise<void> {
-    const response = await fetch(`${BACKEND_URL}/api/v1/notifications/preferences`, {
+    await apiJson('/api/v1/notifications/preferences', {
         method: 'PATCH',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({ userId, notificationsEnabled }),
+        body: { userId, notificationsEnabled },
+        token,
+        errorMessage: 'Failed to update notification preferences',
     });
-    if (!response.ok) {
-        const json = await response.json();
-        throw new Error(json.error || 'Failed to update notification preferences');
-    }
 }
 
 export async function getNotifications(
     userId: string,
     token: string,
 ): Promise<NotificationsResponse> {
-    const response = await fetch(
-        `${BACKEND_URL}/api/v1/notifications?userId=${encodeURIComponent(userId)}`,
-        { headers: { 'Authorization': `Bearer ${token}` } },
+    const response = await apiFetch(
+        `/api/v1/notifications?userId=${encodeURIComponent(userId)}`,
+        { token },
     );
     if (!response.ok) return { notifications: [], unreadCount: 0 };
     return response.json();
@@ -68,12 +56,9 @@ export async function markAllRead(
     userId: string,
     token: string,
 ): Promise<void> {
-    await fetch(`${BACKEND_URL}/api/v1/notifications/mark-read`, {
+    await apiFetch('/api/v1/notifications/mark-read', {
         method: 'PATCH',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({ userId }),
+        body: { userId },
+        token,
     });
 }
